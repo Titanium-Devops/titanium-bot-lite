@@ -22,3 +22,13 @@
 4. Bump lite/VERSION by one on the last number. `python3 -m unittest` green. Append a "Step 1d"
    section to docs/STEP-1-REPORT.md. Commit is not possible from your sandbox; leave the tree
    with only your changes.
+
+5. THE BACKGROUND (added 20:59 by Jason): the console's default plate carries Tiiny's logo dead
+   centre, large (about 40 percent of the viewport width, capped at 520 px), faded so it never
+   competes with the conversation: opacity about 0.08 on the dark plates and 0.12 on a light
+   plate, no blur, centred with CSS on a layer behind the transcript and above the photograph
+   (the same layer the boot cover uses, or a new `.brand-watermark` element in the stage), and
+   it stays put when the transcript scrolls. It appears on every plate the picker offers and on
+   the door too, smaller (24 percent). Measure the watermark's contrast against the plate so it
+   reads as a watermark, not a logo: report the computed opacity and its bounding box at
+   1280x800 and 390x844. Nothing else about the plates changes.
