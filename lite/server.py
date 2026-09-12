@@ -30,7 +30,7 @@ from email.policy import default
 from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__
+from . import IMPORT_STARTED, __version__
 from .routines import Scheduler, read_routines
 
 CONSOLE = Path(__file__).parent / "console"
@@ -914,28 +914,27 @@ def first_paint_bytes(base_url=None):
 
 
 def selfcheck(app):
-    """Measure a fresh interpreter to readiness, then one real configured-model turn."""
-    import subprocess
-    import sys
-    import selectors
-    boot_started = time.monotonic()
-    command = [sys.executable, "-m", "lite", "--boot-probe", "--data-dir", str(app.root)]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    """Measure import-to-HTTP readiness, then one real configured-model turn."""
     try:
-        # Probe writes its one readiness line immediately after App initialization.
-        with selectors.DefaultSelector() as ready:
-            ready.register(process.stdout, selectors.EVENT_READ)
-            if not ready.select(timeout=10):
-                raise Refusal("The cold-start probe timed out.", 500)
-            probe = process.stdout.readline()
-        cold_ms = (time.monotonic() - boot_started) * 1000
-        process.communicate(timeout=10)
-        if process.returncode or probe.strip() != "ready":
-            raise Refusal("The cold-start probe failed.", 500)
+        server = Server(("127.0.0.1", 0), app)
+    except OSError as error:
+        raise Refusal("The cold-start probe could not bind a spare port.", 500) from error
+    thread = threading.Thread(target=server.serve_forever, name="Titan startup probe", daemon=True)
+    try:
+        thread.start()
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(f"http://127.0.0.1:{server.server_port}/api/health", timeout=10) as response:
+                if response.status != 200 or json.load(response).get("app") != "titanium-bot-lite":
+                    raise Refusal("The cold-start probe failed.", 500)
+            cold_ms = (time.monotonic() - IMPORT_STARTED) * 1000
+        except (OSError, ValueError, HTTPException) as error:
+            raise Refusal("The cold-start probe failed or timed out.", 500) from error
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.communicate()
+        if thread.ident is not None:
+            server.shutdown()
+            thread.join()
+        server.server_close()
     app.cold_start_ms = cold_ms
     budget = app.budget()  # Idle high-water RSS, before inference; an upper bound.
     started, first, parts = time.monotonic(), None, []

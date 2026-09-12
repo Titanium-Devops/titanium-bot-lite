@@ -672,3 +672,43 @@ Remaining limits: physical-device ASR/TTS and real microphone, speaker and rende
 console behavior are not measured here. Recording requires microphone access in a
 secure browser context and MediaRecorder WebM or WAV support. The orchestrator owns
 console measurement. No browser or GUI was launched, and no commit was attempted.
+
+## Step 6a
+
+Version: **0.1.10**, incremented from 0.1.9.
+
+Changed files:
+
+- `lite/__init__.py`: capture the monotonic start before the remaining package
+  imports so the CLI measurement includes imports and App construction.
+- `lite/server.py`: replace the child-process readiness probe with a temporary
+  same-process HTTP server, served in a daemon thread on a loopback spare port.
+  Measure through the first successful `GET /api/health`, bypass proxy settings,
+  and shut down, join and close the probe before measuring the model turn.
+  Preserve printed metrics and the RSS, first-paint and cold-start budget checks.
+  The existing CLI constructs and closes the App; no second App is needed.
+- `lite/VERSION`, `tests/test_config.py`: bump the release and version assertions.
+- `tests/test_server.py`: cover readiness, failed health responses, timeouts,
+  over-budget startup, thread/socket cleanup and forbidden process-launch text.
+  Retain the real CLI test, skipping only when loopback binding is denied.
+- `docs/REPORT.md`: this section.
+
+Simplifications: removed child-process, pipe and selector management; reused the
+existing App, Server and health endpoint. No dependencies added.
+
+Verification:
+
+- `python3 -m unittest`: **101 tests, 96 passed, 5 skipped**, exit 0. The skips
+  are sandbox-denied loopback tests, including the new HTTP startup probe.
+  Mocked probe success/failure, cleanup and budget checks passed.
+- `python3 -m compileall -q lite tests`: passed.
+- `rg -n 'subprocess|os\.system' lite`: **zero matches** (exit 1).
+- `python3 -m lite --version`: **0.1.10**.
+- `git diff --check`: passed; macOS emitted sandbox cache/FSEvents diagnostics.
+- No separate linter or typechecker is configured. The suite includes console
+  JavaScript syntax checks. No browser or GUI was launched; no commit attempted.
+
+Remaining limits: actual loopback readiness timing and physical-device inference
+cannot be verified in this sandbox. The measurement begins at package import in
+this process, excluding interpreter launch; direct embedded calls long after
+import include that elapsed time and are not fresh CLI startup measurements.

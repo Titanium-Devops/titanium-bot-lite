@@ -1,9 +1,11 @@
 """Offline wire contracts plus optional real loopback HTTP integration."""
 import contextlib
+import errno
 import io
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
@@ -19,7 +21,7 @@ from types import SimpleNamespace
 TEST_ROOT = Path(__file__).resolve().parents[1] / 'data/tests'
 TEST_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ['ONELANE_DIR'] = str(TEST_ROOT / '.onelane')
-from lite.server import App, Device, Handler, Refusal, Server, build_prompt, first_paint_bytes, read_memories, read_persona
+from lite.server import App, Device, Handler, Refusal, Server, build_prompt, first_paint_bytes, selfcheck, read_memories, read_persona
 
 
 class WireSocket:
@@ -219,7 +221,14 @@ class RouteTests(AppCase):
 
 
 class ReaderAndQueueTests(AppCase):
-    def test_selfcheck_measures_fresh_process_and_budget(self):
+    def test_selfcheck_measures_http_readiness_and_budget(self):
+        try:
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+        except OSError as error:
+            if error.errno in (errno.EPERM, errno.EACCES):
+                self.skipTest('Sandbox denies loopback binding')
+            raise
         result = subprocess.run([sys.executable, '-m', 'lite', '--selfcheck',
                                  '--data-dir', str(self.app.root / 'selfcheck')],
                                 cwd=TEST_ROOT.parents[1], capture_output=True, text=True, timeout=15)
@@ -234,6 +243,46 @@ class ReaderAndQueueTests(AppCase):
         self.assertGreater(report['budget']['coldStartMs'], 0)
         self.assertLess(report['budget']['coldStartMs'], 5000)
         self.assertIsNotNone(report['timings']['firstTokenMs'])
+
+    def test_selfcheck_health_probe_cleanup_and_budget_failures(self):
+        for failure in (None, OSError('timed out'), 'wrong app', 'over budget'):
+            with self.subTest(failure=failure):
+                stopped = threading.Event()
+                server = MagicMock(server_port=12345)
+                server.serve_forever.side_effect = stopped.wait
+                server.shutdown.side_effect = stopped.set
+                opener = MagicMock()
+                response = opener.open.return_value.__enter__.return_value
+                response.status = 200
+                response.read.return_value = json.dumps({'app': 'wrong' if failure == 'wrong app'
+                                                        else 'titanium-bot-lite'}).encode()
+                if isinstance(failure, OSError):
+                    opener.open.side_effect = failure
+                out = io.StringIO()
+                with patch('lite.server.Server', return_value=server) as factory, \
+                     patch('lite.server.urllib.request.build_opener', return_value=opener), \
+                     patch('lite.server.IMPORT_STARTED', time.monotonic() - (6 if failure == 'over budget' else .25)), \
+                     contextlib.redirect_stdout(out):
+                    if isinstance(failure, OSError) or failure == 'wrong app':
+                        with self.assertRaises(Refusal):
+                            selfcheck(self.app)
+                    else:
+                        self.assertEqual(selfcheck(self.app), 1 if failure else 0)
+                        report = json.loads(out.getvalue())
+                        self.assertEqual(report['budgetPassed'], failure is None)
+                        self.assertGreaterEqual(report['budget']['coldStartMs'], 250)
+                        self.assertGreater(report['replyCharacters'], 0)
+                factory.assert_called_once_with(('127.0.0.1', 0), self.app)
+                opener.open.assert_called_once_with('http://127.0.0.1:12345/api/health', timeout=10)
+                server.shutdown.assert_called_once()
+                server.server_close.assert_called_once()
+                self.assertFalse(any(t.name == 'Titan startup probe' for t in threading.enumerate()))
+
+    def test_lite_contains_no_process_launches(self):
+        for path in (Path(__file__).resolve().parents[1] / 'lite').rglob('*.py'):
+            source = path.read_text()
+            self.assertNotIn('subprocess', source, str(path))
+            self.assertNotIn('os.system', source, str(path))
 
     def test_memory_reader_validation_and_live_persona(self):
         path = self.app.root / 'memory/profile.md'
