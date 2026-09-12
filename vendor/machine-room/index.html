@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en" data-theme="dusk">
+  <head>
+    <meta charset="utf-8" />
+    <!-- MOBILE-1. viewport-fit=cover is what makes env(safe-area-inset-*) resolve to anything but
+         zero, and there was not one of them in this console before this ship, so the composer sat
+         under the home indicator. interactive-widget=resizes-content is honoured by Chrome and
+         ignored by iOS Safari; the visualViewport listener in app.js is the half that works on the
+         phone, and the iPhone keyboard itself is unmeasured (docs/CONSOLE.md, section 7). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="description" content="Machine Room, the Titanium Bot console for this box." />
+    <title>Machine Room · Titanium Bot</title>
+    <!-- The Titanium Bot mark. This used to be `data:,` -- an empty icon, only there because the
+         relay served none and every load logged a 404. -->
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <!-- CONSOLE-4: the chosen plate, stamped on <html> before a single stylesheet paints.
+         BEFORE the links below, and not after them: a classic script placed after a <link> waits
+         for that stylesheet to load before it executes, which is the whole cost this removes.
+         Measured on grok-bot-local-vm (this Mac), warm box, over loopback, sampling the shell's
+         computed background every 25 ms: 1,247 ms of the warmwind mountains with no saved choice
+         and 861 ms with habitat-3 saved, because nothing set data-bg until backgrounds.js ran at
+         the end of fourteen serial gateway round trips. After this file: 0 ms on both, across 220
+         samples each. -->
+    <script src="bg-boot.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="motion.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="backgrounds.css" />
+    <link rel="stylesheet" href="mascots.css" />
+    <!-- ONBOARD-1: the first-run dialog. Its own file so the wave editing styles.css and this
+         one never land on the same lines. -->
+    <link rel="stylesheet" href="onboarding.css" />
+    <!-- CONSOLE-4. Four stylesheets whose waves each own one file: the boot cover, and the three
+         sibling modules item A installs seams for. Each ships as a stub until its item lands. -->
+    <link rel="stylesheet" href="boot.css" />
+    <link rel="stylesheet" href="gap-badge.css" />
+    <link rel="stylesheet" href="screen-tile.css" />
+    <link rel="stylesheet" href="files-viewer.css" />
+    <!-- SETTINGS-2: the settings surface's own sheet, owned by settings.js the way push-settings.css
+         is owned by push-settings.js. Linked here as well as by the module so the panel is never
+         drawn once unstyled; the module's own ensureStylesheet is idempotent. -->
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <!-- CONSOLE-4: the boot cover. Static markup, so it is on screen with the FIRST paint rather
+         than after a script has decided to draw it. Opaque over the whole shell on purpose: the
+         shell under it is not the person's box until app.js has filled it, and every field in it
+         ships blank for that reason (see the note on .room-capsule). The lift logic is the IIFE at
+         the end of this file, and it writes one line saying the box has not been reached when the
+         ceiling fires before anything was drawn. -->
+    <div id="boot-cover" data-boot-state="showing" role="status" aria-live="polite">
+      <div class="boot-cover-inner">
+        <img class="boot-sprite" data-boot-sprite src="assets/characters/titan-curious.png" alt="" width="96" height="96" />
+        <strong class="boot-line">Setting up your console</strong>
+        <small class="boot-step" data-boot-step>Reaching this box</small>
+        <div class="boot-track" aria-hidden="true"><span></span></div>
+      </div>
+    </div>
+
+    <div class="app-shell" id="app-shell">
+      <div class="ambient-backdrop" aria-hidden="true"></div>
+      <div class="ambient-vignette" aria-hidden="true"></div>
+
+      <header class="window-bar">
+        <div class="window-identity" aria-label="Titanium Bot, Machine Room">
+          <!-- MOBILE-1: the roster's drawer handle. Drawn only at phone widths, where the roster
+               is off canvas; above the breakpoint the roster is a column and this is display:none.
+               It replaces the traffic lights on the bar rather than adding to it, because the bar
+               being too wide is the whole bug. -->
+          <button class="icon-button drawer-toggle" id="roster-drawer" type="button" data-drawer-toggle="roster" aria-controls="worker-roster" aria-expanded="false" aria-label="Conversations">☰</button>
+          <div class="traffic-lights" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <!-- The product lockup, at the bar's own height. The words "Machine Room" stay as the
+               page title and as the eyebrow beside the mark: the lockup says whose console this
+               is, the eyebrow says which room of it you are in. -->
+          <img class="window-lockup" src="assets/titanium-bot-logo.svg" alt="Titanium Bot" />
+          <strong class="window-eyebrow">Machine Room</strong>
+        </div>
+
+        <!-- PHONE-CONSOLE-1: at phone widths this is not a dock on the bar, it is the menu behind the
+             composer's + button (styles.css, the PHONE-CONSOLE-1 block). The markup does not change
+             between the two, so every button keeps the handler app.js bound at boot and the Add
+             count keeps being filled; only where it is drawn does. -->
+        <nav class="capability-dock" aria-label="Capabilities">
+          <span class="capability-scope" id="capability-scope"></span>
+          <!-- PHONE-CONSOLE-1: the one entry that exists only in the menu. Above the breakpoint the
+               + button beside the message box picks a file itself, so this is hidden there. -->
+          <button class="capability-button is-attach" type="button" data-capability="attach" aria-label="Attach a file">
+            <span class="capability-icon">▱</span><span>Attach a file</span>
+          </button>
+          <button class="capability-button is-contextual" type="button" data-capability="files" data-capability-scope="context" aria-label="Open files for the current context">
+            <span class="capability-icon">▱</span><span>Files</span>
+          </button>
+          <button class="capability-button is-contextual" type="button" data-capability="browser" data-capability-scope="context" aria-label="Open browser for the current context">
+            <span class="capability-icon">◎</span><span>Browser</span>
+          </button>
+          <button class="capability-button is-contextual" type="button" data-capability="routines" data-capability-scope="context" aria-label="Manage routines for the current context">
+            <span class="capability-icon">◷</span><span>Routines</span>
+          </button>
+          <button class="capability-button is-contextual" type="button" data-capability="skills" data-capability-scope="context" aria-label="Manage skills for the current agent">
+            <span class="capability-icon">✎</span><span>Skills</span>
+          </button>
+          <span class="capability-divider" aria-hidden="true"></span>
+          <button class="capability-button is-global" type="button" data-capability="marketplace" data-capability-scope="global" aria-label="Open the marketplace">
+            <span class="capability-icon">✦</span><span>Marketplace</span>
+          </button>
+          <!-- AGENTS-CAP-1: how many of the twelve bots beside Titan are already on this box.
+               Filled by renderAgentCount in app.js. -->
+          <button class="capability-button is-global" type="button" data-capability="add" data-capability-scope="global" aria-label="Create worker or room">
+            <span class="capability-icon">＋</span><span>Add</span><small class="capability-count" data-add-count></small>
+          </button>
+        </nav>
+
+        <div class="window-actions">
+          <!-- MOBILE-1: the agent panel's drawer handle, and with it the first way a thumb has ever
+               had of reaching this agent's screen tile. -->
+          <button class="icon-button drawer-toggle" id="context-drawer" type="button" data-drawer-toggle="context" aria-controls="context-space" aria-expanded="false" aria-label="This conversation">◧</button>
+          <!-- GW-14: shown only when isGlobalSearchEnabled answered true at boot. -->
+          <button class="quiet-button palette-hint" id="palette-hint" type="button" aria-label="Search messages, bots and files" hidden>Search <kbd>⌘K</kbd></button>
+          <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle atmosphere">◐</button>
+          <button class="icon-button" id="settings-button" type="button" aria-label="Open settings">⚙</button>
+          <!-- Shown only when the relay reports a password is configured, so the loopback console
+               on the Mac (no ui/auth.json) does not offer a sign-out that would do nothing. -->
+          <button class="icon-button" id="logout-button" type="button" aria-label="Log out" title="Log out" hidden>⏻</button>
+        </div>
+      </header>
+
+      <main class="stage" id="stage">
+        <section class="worker-roster" id="worker-roster" aria-label="Workers and rooms">
+          <div class="roster-heading">
+            <div class="roster-tabs" role="tablist" aria-label="Browse workers or rooms">
+              <button class="roster-tab is-active" id="workers-tab" type="button" role="tab" aria-selected="true" data-roster-tab="workers">Workers</button>
+              <button class="roster-tab" id="rooms-tab" type="button" role="tab" aria-selected="false" data-roster-tab="rooms">Rooms</button>
+            </div>
+            <!-- AGENTS-CAP-1: the bots on this box against the box's cap of 13, Titan and twelve
+                 more. Rooms are not bots and are not counted; the host's own countAgents, which
+                 does count them, is on the tooltip. -->
+            <span class="roster-count" data-agent-count hidden></span>
+            <!-- QOL-NEEDS-YOU: how many agents ended a turn asking you something. -->
+            <span class="roster-needs-you" data-needs-you-count hidden></span>
+            <button class="quiet-button" id="hide-roster" type="button">Hide</button>
+          </div>
+          <div class="worker-stack" id="worker-stack" role="tabpanel" aria-labelledby="workers-tab"></div>
+        </section>
+
+        <section class="conversation-space" aria-labelledby="room-title">
+          <!-- CONSOLE-4-SEED-1: every field a person reads ships EMPTY and is filled by app.js.
+               These carried design copy -- "MSP Team", "3 members · ready", "2h 14m", "Ask MSP
+               Team…", "MSP Team tools", "MSP Team · shared", "Atera Triage's desktop", "Atera
+               Triage is working" -- and when the gateway stalls, app.js never loads at all and the
+               boot cover comes off that fiction at its 8 s ceiling with nothing marking it as
+               fiction. Blank is honest; the cover's lift() writes one line saying the box has not
+               been reached. Do not put words back in these nodes. -->
+          <header class="room-capsule">
+            <div>
+              <strong id="room-title"></strong>
+              <span id="room-subtitle"></span>
+            </div>
+            <!-- QOL-NEEDS-YOU: the same amber pill the sidebar card carries, on the conversation
+                 you are actually looking at. -->
+            <span class="needs-you-pill" id="header-needs-you" hidden>Waiting on you</span>
+            <div class="participant-cluster" id="participant-cluster" aria-label="Room participants"></div>
+            <button class="icon-button compact" id="room-menu" type="button" aria-label="Conversation actions">•••</button>
+          </header>
+
+          <div class="transcript" id="transcript" aria-live="polite"></div>
+
+        </section>
+
+        <aside class="context-space" id="context-space" aria-label="Current conversation context">
+          <!-- HANDBACK-1. Two sections above the context card, in this order and no other: the
+               amber "Needs your attention" card while the open agent has a hand-off pending, then
+               that agent's screen. Both are filled by renderHandoffRail/renderScreenTile; the
+               context card, the Now island and the desktop capsule keep their order below, and
+               the Routines block is untouched. -->
+          <section class="context-island handoff-island" id="rail-handoff" aria-label="This agent needs you" hidden></section>
+          <section class="context-island screen-island" id="rail-screen" aria-label="This agent's screen"></section>
+          <section class="context-island room-island" id="context-card"></section>
+
+          <!-- MR-07. Shipped dismissed and empty: the placeholder copy that used to sit here was
+               painted for the ~76ms between DOMContentLoaded and the first renderNowAndSchedule,
+               so the operator's first glance showed a routine and a worker that do not exist. The
+               render fills every field and drops is-dismissed once the host has answered. -->
+          <section class="context-island now-island is-dismissed" aria-labelledby="now-heading">
+            <div class="island-heading">
+              <div><span class="spark">＋</span><strong id="now-heading">Now</strong></div>
+              <button class="icon-button compact" id="dismiss-now" type="button" aria-label="Dismiss current activity">×</button>
+            </div>
+            <div class="now-content">
+              <div class="progress-orbit" aria-hidden="true"><span></span></div>
+              <!-- AVATAR-1: the face of whoever is actually doing this routine. Filled by
+                   renderNowAndSchedule and empty until the host has named a performer. -->
+              <span class="now-performer" id="routine-performer"></span>
+              <div>
+                <strong id="routine-title"></strong>
+                <p id="routine-worker"></p>
+                <small id="routine-meta"></small>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <!-- MOBILE-1: the drawer scrim, INSIDE the stage. `.stage` is `position: relative;
+             z-index: 2`, so it is a stacking context and the two drawers inside it cannot be
+             raised above a sibling of the stage however high their z-index goes: the first cut put
+             the scrim next to the stage and the drawer opened UNDER it, dimmed by its own scrim.
+             It is fixed and inset: 0, so from in here it still covers the bar and the shelf. It
+             keeps its `hidden` attribute for the life of the page and is drawn only by the rule
+             that reads body[data-drawer]. -->
+        <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+      </main>
+
+      <footer class="control-shelf">
+        <!-- FEEDBACK-2: the shelf's furniture band, in the order it stacks. These three used to be
+             absolutely positioned above the shelf and painted over the transcript's last row,
+             which is how the "Accepted by the host" chip ended up sitting on a report card's own
+             Send button. They span the shelf's columns instead, and collapse to nothing when they
+             are hidden or empty. -->
+        <!-- The host's acceptance ledger for the last send, never the click: promptAcceptanceStatus
+             fills this after every sendPrompt, which itself answers "accepted" unconditionally. -->
+        <div class="composer-status" id="composer-status" data-composer-status data-composer-state="idle" hidden></div>
+        <div class="attachment-tray" id="attachment-tray" hidden></div>
+        <!-- FEEDBACK-1: always here, whether or not anything has gone wrong. The automatic offer
+             only appears when the console can see a failure, and an offer nobody answers dies with
+             the tab, so this is the door that is always open. -->
+        <div class="composer-aside">
+          <button class="ghost-button" type="button" id="report-problem" data-report-open>Report a problem</button>
+          <button class="ghost-button" type="button" id="run-self-test" data-run-self-test>Run a self-test</button>
+        </div>
+        <div class="workspace-list" id="workspace-list" aria-label="Open rooms"></div>
+        <form class="composer" id="composer">
+          <button class="composer-plus" id="composer-plus" type="button" aria-label="Add attachment">＋</button>
+          <input id="composer-file" type="file" multiple hidden />
+          <label class="sr-only" for="message-input">Message the selected room</label>
+          <!-- QOL-COMPOSER: a textarea, not an input. Enter sends, Shift+Enter opens a line, and
+               the box grows with what is in it up to eight lines (autosizeComposer in app.js). -->
+          <textarea id="message-input" name="message" rows="1" autocomplete="off" placeholder=""></textarea>
+          <!-- VOICE-1: press to talk, press again to stop. type="button" is load-bearing -- inside a
+               form a default button submits, which would send the composer on every press. The orb
+               lives inside it and its four states are driven only by voice.js from the relay's
+               frames. The label stays a word, because an icon alone never said what this does. -->
+          <!-- CONSOLE-ATTR-1: data-talk-button is the desktop shell's hook for its global hotkey, and
+               it lives HERE rather than being set by voice.js, so it is present before that module
+               boots and stays present when probe() disables the button or the module fails to load.
+               The shell's other selectors do not match this button: its aria-label is "Talk to your
+               agent", and the list's case-insensitive rule wants an exact "Talk", so without this the
+               hotkey falls back to putting the cursor in the composer. docs/APPS.md section 6. -->
+          <button class="voice-talk" id="voice-talk" type="button" data-voice-talk data-talk-button aria-pressed="false" aria-label="Talk to your agent"><span class="voice-orb" data-voice-orb data-state="off"></span><span class="voice-talk-label">Talk</span></button>
+          <button class="send-button" type="submit"><span>➤</span> Send</button>
+        </form>
+        <div class="shelf-utilities">
+          <button class="icon-button notification-button" id="notifications-button" type="button" aria-label="Notifications">♧</button>
+          <button class="icon-button" id="people-button" type="button" aria-label="People">♙</button>
+          <button class="icon-button" id="shelf-settings" type="button" aria-label="Settings">⚙</button>
+          <button class="schedule-ring" id="schedule-button" type="button" aria-label="Next scheduled routine">
+            <span><strong id="next-routine-countdown"></strong><small id="next-routine-label"></small></span>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ONBOARD-1: the first run. app.js opens this only when the box reports that setup is not
+         done yet; a host too old to answer getOnboardingState opens nothing. Titan's face, the
+         five questions he asks, his conversation, and a way out. -->
+    <dialog class="onboarding-dialog" id="onboarding-dialog" aria-labelledby="onboarding-title">
+      <div class="dialog-frame onboarding-frame">
+        <header class="dialog-header">
+          <div>
+            <span class="dialog-eyebrow">First run</span>
+            <h2 id="onboarding-title">Meet Titan</h2>
+          </div>
+          <button class="quiet-button" type="button" data-onboarding-skip>Skip for now</button>
+        </header>
+        <div class="dialog-body onboarding-body" id="onboarding-content"></div>
+      </div>
+    </dialog>
+
+    <dialog class="panel-dialog" id="panel-dialog" aria-labelledby="panel-title">
+      <div class="dialog-frame">
+        <header class="dialog-header">
+          <div>
+            <span class="dialog-eyebrow" id="panel-eyebrow">Capability</span>
+            <h2 id="panel-title">Panel</h2>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="dialog-body" id="panel-content"></div>
+      </div>
+    </dialog>
+
+    <dialog class="desktop-dialog" id="desktop-dialog" aria-labelledby="desktop-title">
+      <div class="desktop-frame">
+        <header class="desktop-header">
+          <div>
+            <span class="dialog-eyebrow">Shared computer</span>
+            <h2 id="desktop-title">Desktop</h2>
+          </div>
+          <div class="desktop-header-actions">
+            <!-- Both of these belong in this row and not in the footer. They were 719px below the
+                 button and at the other end of the dialog, next to Pause, so the operator watching
+                 Learn revert from "Starting..." saw nothing change anywhere near it. -->
+            <!-- A refused start writes its reason here, beside the button that was clicked, as well
+                 as into a toast: a modal that never opened cannot carry the explanation. -->
+            <span class="teach-refusal" id="teach-refusal" hidden></span>
+            <!-- Starting a recording is a round trip to the box: about 6 seconds on a screen it has
+                 already opened, about 23 on one it has not. This line is what says so while it runs. -->
+            <span class="teach-progress" id="teach-progress" hidden></span>
+            <button class="secondary-button" id="teach-button" type="button">● Learn this task</button>
+            <button class="dialog-close" type="button" data-close-desktop aria-label="Close desktop">×</button>
+          </div>
+        </header>
+        <!-- HANDBACK-1: the instruction, across the top of the screen it is about. This is the
+             third fixed row of the frame (flex:0 0 auto) so the workspace below it keeps taking
+             what is left; MR-33 was exactly this overflow, and a long model-written instruction
+             would re-open it, so the note clamps to two lines and carries the rest in its title.
+             #hand-back and #hand-back-note are the ids the footer used to hold: they moved here,
+             they did not change, and verify-dashboard's GW-10 leg still points at the real
+             control rather than going red for the wrong reason. -->
+        <div class="handoff-banner" id="handoff-banner" hidden>
+          <span class="hand-back-note" id="hand-back-note" hidden></span>
+          <div class="handoff-banner-actions">
+            <button class="secondary-button" id="handoff-skip" type="button" data-handoff-action="skip" hidden>Skip this step</button>
+            <button class="primary-button" id="hand-back" type="button" data-handoff-action="done" hidden>I&rsquo;m done, continue</button>
+          </div>
+        </div>
+        <div class="desktop-workspace">
+          <nav class="app-previews" id="app-previews" aria-label="Open desktop applications">
+            <button class="app-preview active" data-desktop-app="browser" type="button"><span>Browser</span><small>Live view of the box</small></button>
+            <button class="app-preview" data-desktop-app="files" type="button"><span>Files</span><small>Files from this conversation</small></button>
+            <button class="app-preview" data-desktop-app="terminal" type="button"><span>Terminal</span><small>Shell on the box</small></button>
+          </nav>
+          <section class="desktop-window" id="desktop-window"></section>
+          <aside class="action-timeline">
+            <span class="dialog-eyebrow">Current run</span>
+            <strong id="desktop-run-name">No run in progress</strong>
+            <ol id="desktop-timeline"></ol>
+          </aside>
+        </div>
+        <footer class="desktop-footer">
+          <span class="desktop-live"></span>
+          <!-- qol/vnc-paste: the pane's clipboard, said once where the pane is. "while this pane has
+               the keyboard" is the honest scope: once the box's screen is clicked the browser stops
+               delivering paste here at all, and only the frame's own Cmd+V chord (Mac) gets back.
+               The button beside it is the way out that needs no keyboard at all: noVNC's control bar
+               is hidden inside the frame, and hiding it takes noVNC's own drag handle with it, so
+               without this there is no pointer route to the clipboard panel underneath. -->
+          <span class="desktop-paste-note" id="desktop-paste-note">⌘/Ctrl + V pastes into the box while this pane has the keyboard · ⌘/Ctrl + Shift + B shows the box’s own clipboard bar</span>
+          <button class="secondary-button" id="desktop-vnc-bar" type="button">Clipboard bar</button>
+          <button class="secondary-button" id="pause-run" type="button">Pause</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog class="teach-dialog" id="teach-dialog" aria-labelledby="teach-title">
+      <div class="teach-frame">
+        <header>
+          <div><span class="record-dot"></span><strong id="teach-title">Recording this agent's screen</strong></div>
+          <time id="teach-timer">00:00</time>
+        </header>
+        <div class="teach-canvas">
+          <!-- Was a drawing of an Atera ticket queue on a real customer URL. The real capture is
+               ffmpeg on this worker's own X display, so the live screen belongs here -- but the
+               VNC client for it is mounted only while the operator has asked for the screen,
+               because a client on another origin keeps every key once it has one. -->
+          <div class="teach-live" id="teach-live"></div>
+        </div>
+        <div class="field">
+          <label for="teach-note">Say what you are doing, as you would to a person</label>
+          <textarea id="teach-note" rows="2" placeholder="e.g. Open Atera, filter to unassigned tickets, and flag anything for Jason Brashear"></textarea>
+          <!-- The ten-minute cap is the host's own timer, not a click: it calls the same stop this
+               button calls and has nothing from this dialog to hand it, so a recording left to run
+               out is saved and dispatched with the note still sitting in the textarea. The hint
+               promised the note always reached the learning turn, which was only ever true of
+               Finish recording. -->
+          <span class="field-hint">Finish recording hands the video to this agent: the learn-from-demonstration skill claims it, steps through frames of the demo, and writes a skill it can run again. Finish recording sends this note in the message that starts that learning turn, so the agent reads it before it opens a single frame; a recording left running to the ten-minute cap is saved by the box itself and starts that turn without this note. Write it as the sentence you would say to a person you had just shown the task to.</span>
+        </div>
+        <footer>
+          <!-- "It never leaves the machine" used to stand here, and it was not true of the path
+               this dialog offers. The recipe the host seeds on save extracts frames, hands the
+               video to a subagent, and both are read by the model this box talks to. Discard is
+               the path that keeps the recording on the box. -->
+          <div class="teach-notes">
+            <span>Recorded on this worker's own screen and written to the box. Finish recording hands frames and the video to the model this box runs on, so a saved demonstration leaves the machine. Discard deletes it and sends nothing.</span>
+            <span class="teach-keyboard" id="teach-keyboard">Escape discards this recording. Clicking outside the dialog does not stop it.</span>
+          </div>
+          <!-- A stop the host refused says so here, in front of the operator, with both buttons
+               live again. Behind the modal is where nobody reads it. -->
+          <span class="teach-error" id="teach-error" hidden></span>
+          <div class="teach-actions">
+            <button class="ghost-button" id="discard-teach" type="button">Discard</button>
+            <button class="danger-button" id="finish-teach" type="button">■ Finish recording</button>
+          </div>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- GW-14: the search palette. Cmd-K / Ctrl-K; the host's own index through searchAgents
+         and searchMedia, bots matched on the roster already held. -->
+    <dialog class="palette-dialog" id="palette" aria-label="Search">
+      <div class="palette-frame">
+        <label class="sr-only" for="palette-input">Search messages, bots and files</label>
+        <input id="palette-input" type="search" autocomplete="off" placeholder="Search messages, bots and files…" />
+        <div class="palette-chips" role="group" aria-label="Result kinds">
+          <button class="roster-tab is-active" type="button" data-palette-kind="messages" aria-pressed="true">Messages <b>0</b></button>
+          <button class="roster-tab" type="button" data-palette-kind="bots" aria-pressed="false">Bots <b>0</b></button>
+          <button class="roster-tab" type="button" data-palette-kind="files" aria-pressed="false">Files <b>0</b></button>
+        </div>
+        <div class="palette-results" id="palette-results"></div>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <!-- AVATAR-1. The mascot element is the design kit's own file, vendored byte for byte;
+         mascot-crew.js decides who is who and what mood they are in; mascots.js is the wiring, and
+         it has to install window.titanAvatarMarkup before app.js draws its first face, so all
+         three load ahead of the boot chain below. -->
+    <script src="assets/titan-mascot.js"></script>
+    <script src="mascot-crew.js"></script>
+    <script src="mascots.js"></script>
+    <script src="adapter.js"></script>
+    <script src="gateway-adapter.js"></script>
+    <!-- The Marketplace's Bots tab. It only attaches window.__marketplaceBots at load and reads
+         the adapter lazily, so it can come before app.js builds one. -->
+    <script src="marketplace-bots.js"></script>
+    <!-- BOTS-4. The Add sequence behind a catalog bot, in its own module so the page that draws a
+         bot and the setup that creates one are not the same file. It attaches window.__botSetup at
+         load and reads the gateway lazily, the same contract marketplace-bots.js keeps; the Bots
+         tab falls back to its own Import Bot when this module is absent. -->
+    <script src="bot-setup.js"></script>
+    <!-- The cloud browser's own side of the console: the strip in the Computer card that says where
+         the browser is running and what the month cost, and the take-over row beside a hand-off
+         card. Same contract as marketplace-bots.js above -- it publishes window.__cloudBrowser at
+         load, reads the gateway lazily, and finds the cards itself, so nothing in app.js has to
+         call it. It shipped once with no tag here at all, which is how a person could never take
+         over a cloud session; scripts/verify-browser-tools.mjs now opens the console in a real
+         browser and fails if the strip is not on screen. -->
+    <script src="cloud-browser.js"></script>
+    <!-- VOICE-1. The talk button, the orb, the microphone and the speaker. Same contract as
+         cloud-browser.js above: it publishes window.__voice at load, reads the adapter and the UI
+         helpers lazily, finds its own hosts in the DOM, and no-ops with either absent. It is here
+         rather than after app.js for the reason written below: the strip and the Voice card are put
+         back by its own observer, and a module that arrives late shows a console with no way to
+         talk for a tick. -->
+    <script src="voice.js"></script>
+    <!-- VOICE-13. The motion on the call screen's avatar, and nothing else: voice.js asks
+         window.__voiceCallAvatar to mount, change state and release, and draws the words and the
+         controls on its own when this module is absent or the mascot kit cannot run. -->
+    <script src="voice-call-avatar.js"></script>
+    <script src="code-tasks.js"></script>
+    <!-- CONSOLE-4: the three sibling modules items B, C and D fill. They sit here, beside
+         marketplace-bots.js and ahead of app.js, for one reason: app.js consults all three seams
+         inside its FIRST renderAll, and a module that arrives after that first paint would show
+         the person an unbadged transcript and a plateless tile for one tick before swapping them.
+         Each publishes its object at load and reads the adapter lazily, which is exactly the
+         contract marketplace-bots.js above already keeps. Every seam no-ops with the module absent,
+         so each of these can stay a stub until its item lands. -->
+    <script src="gap-badge.js"></script>
+    <script src="screen-tile.js"></script>
+    <script src="files-viewer.js"></script>
+    <!-- PUSH-1. The fourth module on the same seam, and the same contract: it publishes
+         window.__pushSettings at load, reads window.__mrUi lazily, carries its own stylesheet, and
+         appends one section to the Settings panel when that panel opens. With this line removed the
+         console boots exactly as it did before and Settings simply has one fewer card, which is a
+         gate assertion in scripts/verify-push.mjs rather than a claim made here. -->
+    <script src="push-settings.js"></script>
+    <!-- SETTINGS-2. The settings surface and the account menu at the foot of the roster, on the same
+         seam and under the same contract: each publishes its object at load (window.__mrSettings,
+         window.__accountMenu), reads window.__mrUi and the adapter lazily, finds its own hosts in the
+         DOM, and no-ops with either absent. settings.js comes first because account-menu.js reads its
+         row list. With both removed the console boots exactly as before and app.js falls back to the
+         panel that shipped, which is a leg of scripts/verify-settings.mjs rather than a claim here. -->
+    <script src="settings.js"></script>
+    <script src="account-menu.js"></script>
+    <script>
+      // app.js builds its adapter synchronously, so the gateway is read first and app.js is
+      // loaded after. If the gateway is unreachable the demo adapter runs and the page still
+      // comes up -- with a visible mark, so a demo is never mistaken for the live machine.
+      window.__bootMachineRoom().then(() => {
+        if (!window.__machineRoomLive) document.documentElement.dataset.demo = "true";
+        const script = document.createElement("script");
+        script.src = "app.js";
+        script.onload = () => {
+          const picker = document.createElement("script");
+          picker.src = "backgrounds.js";
+          document.body.appendChild(picker);
+        };
+        document.body.appendChild(script);
+      });
+    </script>
+
+    <!-- CONSOLE-4: when the cover lifts.
+         =================================
+         Deliberately here and not in gateway-adapter.js, and deliberately not chained to hydrate's
+         promise. That file has no AbortController and no per-call timeout anywhere, and it awaits
+         every installed connector before it asks for the first conversation -- BOOT-1 measured
+         46,318 ms to live with one cold stdio connector. A cover that waits for that promise is a
+         cover that never lifts. So the ceiling is a setTimeout armed at parse time, and the two
+         signals are things a PERSON can see on the page rather than promises the page made.
+
+         Both observers watch for markup app.js draws. The roster and the transcript are painted in
+         the same synchronous renderAll, so a worker card on screen means the first transcript page
+         has been drawn too -- which is how an empty conversation resolves without waiting out the
+         ceiling. -->
+    <script>
+      (function bootCover() {
+        "use strict";
+        var cover = document.getElementById("boot-cover");
+        if (!cover) return;
+        var CEILING_MS = 8000;
+        var startedAt = Date.now();
+        var seen = { roster: false, rows: false, demo: false };
+
+        // The whole lift decision, as one pure function of what has been seen and how long it has
+        // been. Everything below only feeds it and acts on its answer.
+        function shouldLiftCover(state) {
+          if (state.demo) return true;
+          if (state.elapsed >= CEILING_MS) return true;
+          return Boolean(state.roster && state.rows);
+        }
+
+        var quiet = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        var stepEl = cover.querySelector("[data-boot-step]");
+        var step = function (words) { if (stepEl) stepEl.textContent = words; };
+        var lifted = false;
+
+        function removeCover() {
+          if (cover && cover.parentNode) cover.parentNode.removeChild(cover);
+          cover = null;
+        }
+
+        function lift() {
+          if (lifted) return;
+          lifted = true;
+          if (observers) observers.forEach(function (o) { try { o.disconnect(); } catch (e) {} });
+          // What the cover uncovers. Three cases, and the difference is the whole point of this
+          // block:
+          //
+          //   - roster and rows both drawn: the real console. Nothing to write.
+          //   - roster drawn, rows not: the page is real and one conversation is still opening.
+          //   - neither: the ceiling fired before app.js reached its first render, so every field
+          //     in the shell is still the empty markup index.html ships. It used to ship copy --
+          //     "MSP Team", "3 members · ready", "2h 14m", "Atera Triage's desktop" -- and with
+          //     /api stalled the cover came off that at 8.7 s and a person read a team, an agent
+          //     and a routine that do not exist on their box, with nothing saying anything was
+          //     wrong. Measured on console.titanium.bot 2026-09-08 with the calls stalled in the
+          //     browser only. Now the shell is blank until app.js fills it, and this says why.
+          var transcript = document.getElementById("transcript");
+          var stalled = !seen.roster && !seen.rows && !seen.demo;
+          if (!seen.rows && transcript && !transcript.querySelector(".message-row")) {
+            transcript.innerHTML = stalled
+              ? '<div class="empty-state">Still reaching this box. Nothing on this page has loaded yet.</div>'
+              : '<div class="empty-state">Still opening this conversation…</div>';
+          }
+          if (stalled) {
+            var stalledTitle = document.getElementById("room-title");
+            var stalledSub = document.getElementById("room-subtitle");
+            if (stalledTitle && !stalledTitle.textContent) stalledTitle.textContent = "Still connecting";
+            if (stalledSub && !stalledSub.textContent) stalledSub.textContent = "this console has not reached your box yet";
+          }
+          if (quiet) { removeCover(); return; }
+          cover.dataset.bootState = "lifting";
+          cover.addEventListener("transitionend", removeCover, { once: true });
+          // A transition that never fires (the node was display:none'd, the sheet did not load)
+          // must not leave an opaque cover over the console for ever.
+          window.setTimeout(removeCover, 900);
+        }
+
+        function settle() {
+          if (shouldLiftCover({ roster: seen.roster, rows: seen.rows, demo: seen.demo, elapsed: Date.now() - startedAt })) lift();
+        }
+
+        var observers = [];
+        function watch(target, fn) {
+          if (!target) return;
+          var o = new MutationObserver(fn);
+          o.observe(target, { childList: true, subtree: true });
+          observers.push(o);
+          fn();
+        }
+
+        watch(document.getElementById("worker-stack"), function () {
+          if (seen.roster) return;
+          var card = document.querySelector("#worker-stack .worker-card");
+          if (!card) return;
+          seen.roster = true;
+          var name = (card.querySelector("strong") || {}).textContent;
+          step(name ? "Opening " + name : "Opening your conversation");
+          // The roster and the transcript are drawn in one pass, so an empty transcript at this
+          // moment is a conversation with nothing in it, not one that has not loaded yet.
+          var transcript = document.getElementById("transcript");
+          if (transcript && !transcript.querySelector(".message-row") && !transcript.querySelector("[data-load-older]")) seen.rows = true;
+          settle();
+        });
+
+        watch(document.getElementById("transcript"), function () {
+          if (seen.rows) return;
+          if (!document.querySelector("#transcript .message-row")) return;
+          seen.rows = true;
+          settle();
+        });
+
+        // The gateway was unreachable and the demo factory is what is behind this cover. Say so
+        // here, then get out of the way: a friendly "Setting up your console" sitting on top of the
+        // red DEMO DATA bar is the cover lying about the page it is covering.
+        var demoWatch = new MutationObserver(function () {
+          if (!document.documentElement.dataset.demo || seen.demo) return;
+          seen.demo = true;
+          step("This console could not reach this box");
+          cover.dataset.bootFault = "1";
+          settle();
+        });
+        demoWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-demo"] });
+        observers.push(demoWatch);
+
+        window.setTimeout(settle, CEILING_MS);
+
+        // The live crew face, once the kit has upgraded. The still above is what paints first --
+        // it needs no script at all -- and this only swaps in the animated one when there is one to
+        // swap in and the person has not asked for less motion.
+        if (!quiet && window.customElements) {
+          window.customElements.whenDefined("titan-mascot").then(function () {
+            var still = cover && cover.querySelector("[data-boot-sprite]");
+            if (!still) return;
+            var live = document.createElement("titan-mascot");
+            live.setAttribute("variant", "0");
+            live.setAttribute("mood", "curious");
+            live.setAttribute("tracking", "off");
+            live.className = "boot-sprite-live";
+            still.replaceWith(live);
+          }).catch(function () {});
+        }
+      })();
+    </script>
+  </body>
+</html>
