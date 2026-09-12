@@ -1,0 +1,54 @@
+<div id="boot-cover" data-boot-state="showing" role="status" aria-live="polite">
+  <div class="boot-cover-inner">
+    <img class="boot-sprite" data-boot-sprite src="assets/characters/titan-curious.png" alt="" width="96" height="96">
+    <strong class="boot-line">Setting up your console</strong>
+    <small class="boot-step" data-boot-step>Reaching this box</small>
+    <div class="boot-track" aria-hidden="true"><span></span></div>
+  </div>
+</div>
+<div class="app-shell" id="app-shell">
+<div class="ambient-backdrop" aria-hidden="true"></div><div class="ambient-vignette" aria-hidden="true"></div>
+<header class="window-bar">
+  <div class="window-identity" aria-label="Titanium Bot">
+    <button class="icon-button drawer-toggle" id="roster-drawer" type="button" data-drawer-toggle="roster" aria-controls="worker-roster" aria-expanded="false" aria-label="Conversations">☰</button>
+    <div class="traffic-lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <img class="window-lockup" src="brand/titanium-bot-logo.svg" alt="Titanium Bot">
+    <strong class="window-eyebrow">Your console</strong>
+  </div>
+  <nav class="capability-dock" aria-label="Capabilities">
+    <button class="capability-button is-attach" type="button" data-capability="attach"><span class="capability-icon">＋</span><span>Attach a file</span></button>
+    <button class="capability-button" type="button" data-capability="files"><span class="capability-icon">▱</span><span>Files</span></button>
+    <button class="capability-button" type="button" data-capability="routines"><span class="capability-icon">◷</span><span>Routines</span></button>
+    <button class="capability-button" type="button" data-capability="skills"><span class="capability-icon">✧</span><span>Skills</span></button>
+    <button class="capability-button" type="button" data-capability="settings"><span class="capability-icon">⚙</span><span>Settings</span></button>
+  </nav>
+  <div class="window-actions"><button class="icon-button drawer-toggle" type="button" data-drawer-toggle="context" aria-controls="context-space" aria-expanded="false" aria-label="Conversation details">ⓘ</button></div>
+</header>
+<main class="stage" id="stage">
+<section class="worker-roster" id="worker-roster" aria-label="Conversation">
+  <div class="roster-heading"><strong>Your conversation</strong></div>
+  <div class="worker-stack" id="worker-stack"></div>
+</section>
+<section class="conversation-space" aria-labelledby="room-title">
+<header class="room-capsule"><div><strong id="room-title"></strong><span id="room-subtitle"></span></div><div class="participant-cluster" id="participant-cluster"></div><button class="icon-button compact" id="room-menu" type="button" aria-label="Conversation settings">•••</button></header>
+<div class="transcript" id="transcript" aria-live="polite"></div>
+</section>
+<aside class="context-space" id="context-space" aria-label="Conversation details"><section class="context-island room-island" id="context-card"></section></aside>
+<div class="drawer-scrim" id="drawer-scrim" hidden></div>
+</main>
+<footer class="control-shelf">
+<div class="composer-status" id="composer-status" data-composer-state="idle" hidden></div>
+<div class="attachment-tray" id="attachment-tray" hidden></div>
+<form class="composer" id="composer">
+<button class="composer-plus" id="composer-plus" type="button" aria-label="Add attachment" aria-expanded="false">＋</button>
+<input id="composer-file" type="file" multiple hidden>
+<label class="sr-only" for="message-input">Message Titan</label>
+<textarea id="message-input" name="message" rows="1" autocomplete="off" placeholder=""></textarea>
+<button class="voice-talk" id="voice-talk" type="button" data-voice-talk data-talk-button aria-label="Talk to your agent"><span class="voice-orb" data-state="off"></span><span class="voice-talk-label">Talk</span></button>
+<button class="send-button" type="submit"><span>➤</span> Send</button>
+</form>
+<div class="shelf-utilities"><button class="icon-button" id="shelf-settings" type="button" aria-label="Settings">⚙</button></div>
+</footer>
+</div>
+<dialog class="panel-dialog" id="panel-dialog" aria-labelledby="panel-title"><div class="dialog-frame"><header class="dialog-header"><div><span class="dialog-eyebrow" id="panel-eyebrow"></span><h2 id="panel-title"></h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></header><div class="dialog-body" id="panel-content"></div></div></dialog>
+<div class="toast" id="toast" role="status"></div>

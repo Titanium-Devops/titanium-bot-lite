@@ -1,0 +1,174 @@
+/*
+ * Background picker. The handoff paints .app-shell with a gradient over a fixed plate; this keeps
+ * that exact stack and swaps only the plate, so the dusk and mist atmospheres still read the way
+ * they were designed. Scoped to [data-bg] so with no choice stored, nothing here applies and the
+ * original ships untouched.
+ */
+html[data-bg] .app-shell {
+  background:
+    linear-gradient(180deg, rgba(8, 17, 22, 0.15), rgba(8, 17, 22, 0.42)),
+    var(--machine-room-bg) center / cover no-repeat;
+}
+html[data-theme="mist"][data-bg] .app-shell {
+  background:
+    linear-gradient(180deg, rgba(240, 236, 220, 0.08), rgba(20, 42, 48, 0.25)),
+    var(--machine-room-bg) center / cover no-repeat;
+}
+
+/* CONSOLE-4. "Original" is a plate like any other now. bg-boot.js sets data-bg for every id
+   including this one, because leaving the attribute off meant the stylesheet's own mountains were
+   the floor -- and a browser with nothing stored, or with storage blocked, opened on a photograph
+   Jason asked not to see. styles.css paints a flat brand ground instead, and these two rules are
+   what put the mountains back for the person who actually picks them. The rules above already
+   cover it through --machine-room-bg; these stand in when the variable is missing, which is what
+   a stylesheet cached ahead of a bg-boot.js that failed to load looks like. */
+html[data-bg="original"] .app-shell {
+  background:
+    linear-gradient(180deg, rgba(8, 17, 22, 0.15), rgba(8, 17, 22, 0.42)),
+    var(--machine-room-bg, url("assets/warmwind-landscape.svg")) center / cover no-repeat;
+}
+html[data-theme="mist"][data-bg="original"] .app-shell {
+  background:
+    linear-gradient(180deg, rgba(240, 236, 220, 0.08), rgba(20, 42, 48, 0.25)),
+    var(--machine-room-bg, url("assets/warmwind-landscape.svg")) center / cover no-repeat;
+}
+
+.bg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* CONSOLE-4: a series heading is a heading, not a tile. It used to be a <p> carrying an inline
+   `flex-basis:100%` inside a display:grid container, where flex-basis does nothing -- so it took a
+   single 185x104 cell in the run of tiles and read as a blank swatch labelled "Habitat" or "The
+   Lab" (Jason, 2026-09-08: "they're just blank spots"). Spanning every column is what makes it a
+   row; the hairline and the small caps are what stop it reading as a tile that failed to load. */
+.bg-series {
+  grid-column: 1 / -1;
+  margin: 14px 0 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--glass-edge-soft, rgba(255, 255, 255, 0.14));
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.bg-series:first-child { margin-top: 0; }
+
+.bg-swatch {
+  position: relative;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  transition: transform 180ms cubic-bezier(0.34, 1.4, 0.5, 1), border-color 180ms, box-shadow 180ms;
+}
+.bg-swatch:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32); }
+.bg-swatch img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bg-swatch span {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 14px 8px 6px;
+  font-size: 11px;
+  text-align: left;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.72));
+}
+.bg-swatch[aria-pressed="true"] {
+  border-color: var(--accent-soft, #57d9c0);
+  box-shadow: 0 0 0 1px var(--accent-soft, #57d9c0);
+}
+/* The tick only exists on the chosen one, so the state survives a screenshot with no colour. */
+.bg-swatch[aria-pressed="true"]::after {
+  content: "✓";
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  font-size: 11px;
+  border-radius: 50%;
+  background: rgba(10, 16, 20, 0.82);
+  color: var(--accent-soft, #57d9c0);
+}
+
+.bg-remove {
+  position: absolute;
+  top: 6px; left: 6px;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: rgba(10, 16, 20, 0.82);
+  color: #fff; font-size: 12px; line-height: 1;
+  cursor: pointer; opacity: 0;
+  transition: opacity 160ms;
+}
+.bg-swatch:hover .bg-remove, .bg-remove:focus-visible { opacity: 1; }
+
+.bg-note { margin-top: 10px; font-size: 12px; opacity: 0.62; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-swatch { transition: none; }
+}
+
+/* Demo fallback. gateway-adapter sets data-demo on the root when hydration fails; nothing rendered
+   it, so losing the gateway produced a healthier-looking app than having one. Everything below is
+   fixture data, and the operator has to be told before they trust a single number on the screen. */
+html[data-demo="true"] body::before {
+  content: "DEMO DATA — the gateway is unreachable. Nothing on this screen is real.";
+  position: fixed;
+  z-index: 9999;
+  inset: 0 0 auto 0;
+  /* MOBILE-1b. A CAPTION, NOT A CONTROL. At 9999 and inset across the top it is the only fixed
+     overlay the console paints, and on a phone the window bar's first row -- both drawer handles --
+     is under it. Measured on this Mac in real headless Chrome at 390x844 with touch and no gateway
+     credential, so the page fell back to the demo adapter: the caption computed 47.6 px tall,
+     #roster-drawer and #context-drawer are laid out at y 8 with a 44 px box, elementsFromPoint at
+     each handle's centre answered body first, three consecutive touch taps left body.dataset.drawer
+     empty, and page.click("#roster-drawer") timed out with "<body> intercepts pointer events". A
+     person whose box is down is exactly the person who wants to switch conversations to see what
+     else is broken. The phone block in styles.css also drops the bar past it, so the handles are
+     not merely clickable-but-covered. */
+  pointer-events: none;
+  padding: 7px 16px;
+  font: 600 12px/1.4 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: #2b0a10;
+  background: #ff4d6a;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.4);
+}
+html[data-demo="true"] .app-shell { outline: 2px solid #ff4d6a; outline-offset: -2px; }
+
+/* The teach dialog shows the screen actually being recorded, in place of the drawn ticket queue
+   that used to sit there captioned as footage the agent would review. */
+.teach-live { width: 100%; height: 100%; min-height: 320px; border-radius: 10px; overflow: hidden; background: #0b0f13; }
+
+/* Files staged for the next message, shown above the composer so nothing is sent unnoticed. */
+/* `display:flex` beats the `hidden` attribute, so the empty tray still claimed a cell in the
+   shelf's three-column grid -- pushing the composer into column 3 and wrapping the utility
+   icons and next-routine ring onto an invisible second row. Only lay it out when shown. */
+.attachment-tray:not([hidden]) { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
+.attachment-tray .tag { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Agents answer in markdown; the renderer emits real elements, so they need somewhere to land.
+   Without these a bulleted briefing takes the browser default indent and pushes out of the bubble. */
+.message-bubble ul,
+.message-bubble ol { margin: 6px 0; padding-left: 20px; }
+.message-bubble li { margin: 2px 0; }
+/* SHOT-2: the marker was a hardcoded white at 45%, which is dim on ink and all but gone on the
+   mist card. It takes the theme's own secondary text colour instead, in both themes. */
+.message-bubble li::marker { color: var(--text-secondary); }
+/* CONSOLE-5 took the two code rules that stood here -- a white wash in ink and its mist twin. This
+   file loads after styles.css, so leaving them would have been two rules arguing over one element
+   with the later one winning by accident. The chip owns the element now: styles.css, code.code-chip. */
+.message-bubble p + p,
+.message-bubble p + ul,
+.message-bubble p + ol,
+.message-bubble ul + p,
+.message-bubble ol + p { margin-top: 6px; }
+.message-bubble .message-heading { margin-top: 8px; }
