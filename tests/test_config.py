@@ -1,9 +1,12 @@
-"""CLI and persistence contracts without sockets or a browser."""
+"""CLI and persistence contracts without a browser or GUI."""
 import contextlib
 import errno
 import io
 import json
 import os
+import socket
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -74,6 +77,48 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(err, f'Port 8123 is busy; choose another with --port or in {self.root / "config.json"}.\n')
         self.assertNotIn('Traceback', err)
 
+    def test_loopback_listener_refuses_before_binding(self):
+        for host in ('127.0.0.1', '::1'):
+            with self.subTest(host=host):
+                def connect(address, timeout):
+                    self.assertEqual(timeout, 0.2)
+                    if address[0] != host:
+                        raise ConnectionRefusedError()
+                    return contextlib.nullcontext()
+
+                with patch('socket.create_connection', side_effect=connect), patch('lite.server.Server') as server:
+                    code, out, err = self.cli('--port', '8123', '--model', 'echo')
+                server.assert_not_called()
+                self.assertEqual((code, out, err), (1, '', f'Port 8123 is busy; choose another with --port or in {self.root / "config.json"}.\n'))
+
+    def test_real_loopback_listener_refuses_cli(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                listener.bind(('127.0.0.1', 0))
+            except PermissionError:
+                self.skipTest('Sandbox denies binding a loopback socket')
+            listener.listen()
+            port = listener.getsockname()[1]
+            result = subprocess.run(
+                [sys.executable, '-m', 'lite', '--port', str(port), '--bind', '0.0.0.0',
+                 '--model', 'echo', '--data-dir', str(self.root)],
+                capture_output=True, text=True, timeout=5,
+                cwd=Path(__file__).resolve().parents[1])
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, '', f'Port {port} is busy; choose another with --port or in {self.root / "config.json"}.\n'))
+
+    def test_unoccupied_loopbacks_allow_startup_without_address_reuse(self):
+        from lite.server import Server
+        self.assertFalse(Server.allow_reuse_address)
+        with patch('socket.create_connection', side_effect=ConnectionRefusedError()) as connect, patch('lite.server.Server') as server:
+            code, out, err = self.cli('--port', '8123', '--model', 'echo')
+        self.assertEqual((code, err), (0, ''))
+        self.assertIn('is ready', out)
+        self.assertEqual([call.args[0] for call in connect.call_args_list],
+                         [('127.0.0.1', 8123), ('::1', 8123)])
+        server.assert_called_once()
+
     def test_malformed_configuration_exits_without_traceback(self):
         load_config(self.root)
         for filename, contents in (("keys.json", "[]"), ("config.json", "not json")):
@@ -87,16 +132,16 @@ class ConfigTests(unittest.TestCase):
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
-        self.assertEqual((code, out, err), (0, '0.1.1\n', ''))
+        self.assertEqual((code, out, err), (0, '0.1.2\n', ''))
         self.assertFalse((self.root / 'config.json').exists())
-        self.assertEqual(__version__, '0.1.1')
+        self.assertEqual(__version__, '0.1.2')
 
     def test_settings_model_and_name_survive_restart(self):
         app = App(self.root)
         self.addCleanup(app.close)
         status, _, result = wire(app, 'PATCH', '/api/settings', {'base': 'http://new/v1', 'model': 'chosen', 'botName': 'Ada'})
         self.assertEqual(status, 200)
-        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.1'))
+        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.2'))
         app.close()
         restarted = App(self.root)
         self.addCleanup(restarted.close)

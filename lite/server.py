@@ -13,6 +13,7 @@ from pathlib import Path
 import queue
 import random
 import re
+import socket
 import threading
 import time
 import urllib.error
@@ -656,7 +657,7 @@ def selfcheck(app):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    allow_reuse_address = False
 
     def __init__(self, address, app):
         self.app = app
@@ -877,6 +878,14 @@ def main():
             app.close()
         raise SystemExit(code)
     try:
+        # A wildcard bind can succeed beside a loopback listener on macOS.
+        for host in ("127.0.0.1", "::1"):
+            try:
+                with socket.create_connection((host, config["port"]), timeout=0.2):
+                    pass
+            except OSError:
+                continue
+            raise OSError(errno.EADDRINUSE, "Loopback port is busy")
         server = Server((config["bind"], config["port"]), app)
     except OSError as error:
         app.close()

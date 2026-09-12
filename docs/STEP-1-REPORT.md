@@ -274,3 +274,18 @@ is superseded by config's name. The requested checkpoint could not be committed:
 permitted`. No permission bypass was attempted; all Step 1b changes remain
 uncommitted. Intended Lore intent line: `Keep Lite configuration persistent and
 its console separate from the full product relay`.
+
+Step 1c (2026-09-11): `lite/server.py` now checks TCP connections to
+127.0.0.1 and ::1 with a 200 ms timeout before binding, refusing an accepting
+listener with the existing single sentence and exit 1. Server address reuse
+(SO_REUSEADDR) is disabled; the existing bind-error handler is reused.
+`tests/test_config.py` adds IPv4/IPv6 refusal and free-port startup coverage,
+plus a subprocess regression using a throwaway 127.0.0.1 listener on a spare
+port. `lite/VERSION` advances to 0.1.2 under the per-change version rule.
+Verification: `python3 -m unittest` ran 37 tests, 33 passed and 4 skipped
+(sandbox denies socket binding, including the new real-listener regression).
+The mocked refusal test failed before the fix and passed afterward.
+Compileall, JavaScript syntax checks in the suite, and `git diff --check`
+passed; no external linter/typechecker is configured. Live socket behavior
+remains unverified in this sandbox. No dependencies, browser, or GUI were
+used. Only these four files changed; no commit was attempted as instructed.
