@@ -222,3 +222,20 @@ P2 https://audioxpress.com/news/tiiny-ai-unveils-pocket-size-ai-supercomputer-at
 P3 https://finance.yahoo.com/news/agentbox-emerges-tiiny-ai-pocket-193500164.html
 P4 https://www.geeky-gadgets.com/offline-llm-hardware/ · P5 https://tiiny.ai/ and https://tiiny.ai/collections/all
 P6 https://www.openpr.com Tiiny AI Pocket Lab review, 2026-03-13
+
+## Measured on Jason's unit, 2026-09-11 19:55 CDT, from his Mac through the TiinyOS resolver
+
+The pretty hostnames resolve to 127.0.0.1 on a Mac running the TiinyOS client, so
+`http://openai.api.tiiny/v1` works from here with the key from TiinyOS > Settings > API Key
+(Bearer). From another machine the doc says `http://<device-ip>/v1` (port 80, not 8800).
+`scripts/probe-device.sh` is the probe; run with TIINY_KEY, TIINY_BASE, TIINY_MODEL in the env.
+
+| Question | Answer |
+|---|---|
+| Models loaded | deepreinforce-ai/Ornith-1.0-35B (Image-Text-to-Text, supported: Reasoning, Tool Use, vision), Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice, Tongyi-MAI/Z-Image-Turbo |
+| Tool calling | YES. `tools` + `tool_choice: auto` returned a real `tool_calls` entry (get_weather, place "Granger, Texas") with the reasoning in `reasoning_content`. The server underneath is llama.cpp (system_fingerprint b9803). |
+| Streaming | YES on the OpenAI route: `data:` chunks with `delta.reasoning_content` then `delta.content`. |
+| Plain chat latency | 113 s for "Say hello in five words": the model wrote 8,407 characters of reasoning (2,875 completion tokens, about 25 tokens/s) before a six-word answer. `thinking.toggleable` is false on this model. A lite app must either pick a non-reasoning model, cap `max_tokens`, or steer with a system line; measure each. This is the number that decides whether Lite feels alive. |
+| Text to speech | YES: POST /v1/audio/speech with the TTS model id and `input`, NO `voice` field ("Unsupported speaker: default" with one), returns audio/wav 24 kHz, 88 KB for one sentence. |
+| Speech to text | not run yet (needs a wav; the route is documented). |
+| The `default` model id | not tested; use exact ids from /v1/models. |
