@@ -254,3 +254,12 @@ The pretty hostnames resolve to 127.0.0.1 on a Mac running the TiinyOS client, s
   returns empty content; a reasoning scavenger that pulls a usable object out of a reasoning dump;
   TTS with `response_format: "mp3"`, loaded for a session and released after; the NPU budget in
   units (Ornith 50, Z-Image 32, TTS 7); prefetch of the next page while the current one plays.
+
+## The latency answer, measured 2026-09-11 20:08 CDT on the unit
+
+With `chat_template_kwargs: {"enable_thinking": false}` (story-lantern's trick) and max_tokens 800:
+"Say hello in five words" answered in 1.16 s (9 completion tokens, 0 reasoning); the weather tool
+call returned a real `tool_calls` entry in 2.41 s (29 tokens). Same Ornith-1.0-35B model. So one
+loaded model serves chat, tools and vision fast; thinking is switched on per request only when a
+task needs it (a router decision inside Lite: a short reply or a tool call gets no thinking, a
+plan or a long document gets it, with the reasoning scavenger as the safety net).

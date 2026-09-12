@@ -26,8 +26,10 @@ push, no code sandboxes, no marketplace, no team of bots. One owner, one Titan, 
   script at files.tiinycdn.com, not pip). Chat completions, embeddings, images, speech-to-text
   (POST /v1/audio/transcriptions) and text-to-speech (POST /v1/audio/speech) are documented. Model
   list, load, unload and NPU status are documented; model id `default` is whatever is loaded.
-- Tool calling is UNDOCUMENTED on every surface. Skills and routines need a function-calling loop,
-  so step 0 below probes it on Jason's unit before anything else is planned around it.
+- Tool calling WORKS (measured on Jason's unit 2026-09-11: a real `tool_calls` entry from
+  Ornith-1.0-35B in 2.4 s). Streaming works. Text to speech works (Qwen3-TTS, audio/wav). A plain
+  turn takes 1.2 s with `chat_template_kwargs: {"enable_thinking": false}` and 113 s without, so
+  Lite decides per request whether Titan thinks (see docs/tiiny-platform.md).
 - No realtime speech socket: voice is push-to-talk or chunked turns, not live duplex. No cloud key
   is needed for a basic voice loop.
 - PyPI `tiiny-sdk` 0.2.0 is an unrelated Hermes-shaped agent runtime whose `tiiny` script collides
@@ -96,9 +98,9 @@ day one (the product does not do this yet; KB-1f).
 
 ## Delivery order, revised
 
-0. Probe on Jason's unit: does chat completions honour `tools`? Does streaming work on the
-   OpenAI route? Does /v1/audio/speech return audio for a short sentence? Ten minutes with curl,
-   written into docs/tiiny-platform.md. Everything after depends on the first answer.
+0. DONE 2026-09-11: tools, streaming and speech all work on the unit; thinking off per request
+   gives 1.2 s turns. Reuse Jason's onelane (device lock) and story-lantern (device client
+   patterns), both stdlib Python; details in docs/tiiny-platform.md.
 1. Console split plus lite-adapter.js against an echo server; the door says "Brought to you by
    Titanium Bot".
 2. Settings, Model section: list, load, unload on the device; LAN endpoint and cloud key fallbacks.
