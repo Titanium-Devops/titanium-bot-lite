@@ -625,3 +625,50 @@ live-device silence. With the fake final response, the pre-fix loop still reache
 that answer after refusing the tool. Live inference and device timing remain
 unverified; the new log milestones expose where a future device turn waits or
 fails. Debug logging is opt-in and appends to `lite.log` without rotation.
+
+## Step 5
+
+Version: **0.1.8**, incremented from 0.1.7. Completed in the requested order:
+server, console transport, General settings, tests and release/report updates.
+
+Changed files:
+
+- `lite/voice.py` and `lite/server.py`: multipart voice turns select the first
+  ASR/type-or-capability match and first TTS type match, transcribe on the device,
+  enqueue an ordinary tool-loop turn, persist the person's Spoken line and Titan's
+  reply, and return `{heard, said, audio}`. Speech settings expose the four requested
+  fields. All device requests hold OneLane. TTS requests contain model and input,
+  with no voice field. Private WAV files expire after one hour. TTS loads once per
+  active session, releases after five idle minutes or shutdown/configuration change,
+  and its remembered model can reload even when absent from the loaded-model list.
+- `lite/console/voice.js`: replaces the WebSocket transport with MediaRecorder
+  uploads and WAV playback. Push-to-talk posts on release. Always-listening uses
+  eight-second recording windows, an energy gate and 700 ms of quiet. Playback and
+  microphone analysers feed the existing avatar seam; playback plus a 350 ms echo
+  tail suppresses recording. Mute, stop and cancelled microphone acquisition release
+  resources. The five call-screen words, desktop strip and vendored avatar remain.
+- `lite/console/settings.js`: General offers Off, Push to talk and Always listening,
+  with read-only device speech-model names.
+- `tests/test_voice.py`, `tests/voice-contract.cjs`, `tests/test_console.py`,
+  `tests/test_server.py` and `tests/test_config.py`: cover fake-device HTTP, ordinary
+  tools and persisted speech, exact missing-ASR wording, model selection, expiry,
+  lifecycle, settings, recording gates, playback, cancellation and updated version.
+- `lite/VERSION` and `docs/REPORT.md`: release number and this report.
+
+Simplifications: reused the existing queue, tool loop, transcript renderer,
+Spoken chip, settings persistence and call-screen avatar. No new dependencies.
+
+Verification:
+
+- `python3 -m unittest`: **88 tests, 84 passed, 4 skipped**, exit 0. Skips are
+  the existing sandbox-denied live-loopback tests; wire-level HTTP tests run.
+- `node tests/voice-contract.cjs`: passed with fake audio objects, no browser.
+- `python3 -m compileall -q lite tests`: passed. The suite also checks all console
+  JavaScript syntax and verifies the unchanged avatar against its vendored source.
+- `git diff --check`: passed despite macOS sandbox cache/FSEvents diagnostics.
+- `python3 -m lite --version`: **0.1.8**. No separate linter/typechecker is configured.
+
+Remaining limits: physical-device ASR/TTS and real microphone, speaker and rendered
+console behavior are not measured here. Recording requires microphone access in a
+secure browser context and MediaRecorder WebM or WAV support. The orchestrator owns
+console measurement. No browser or GUI was launched, and no commit was attempted.

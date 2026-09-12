@@ -17,7 +17,7 @@
   function general(){
     return group('appearance','Appearance',row('Theme','Choose how the console looks.',select('theme',facts.theme,[['dusk','Dusk'],['mist','Mist'],['ink','Ink']],'Theme'))+row('Language','The language saved for this device.',select('language',facts.language,[['en','English'],['es','Español'],['fr','Français']],'Language'))+'<div data-settings-mount="background"></div>')
       +group('assistant','Your assistant',row('Bot name','What you call your assistant.',input('botName',facts.botName,'Bot name'))+row('Personality','How Titan should answer you.',input('persona',facts.persona,'Personality',true)))
-      +group('voice','Voice',row('Microphone','Voice conversations are not connected yet.','<span>Not connected</span>')+row('Talk mode','Keep using the message box for now.','<span>Off</span>'));
+      +group('voice','Voice',row('Voice','Choose when Titan listens.',select('voiceMode',facts.voice?.mode||'off',[['off','Off'],['push','Push to talk'],['always','Always listening']],'Voice'))+row('Speech to text','The speech model on your device.','<span data-asr-model>Reading…</span>')+row('Text to speech','The voice model on your device.','<span data-tts-model>Reading…</span>'));
   }
   function usage(){
     return group('usage','This process',(facts.usage?.tokens==null?'':row('Tokens used','Work completed since the server started.',`<span>${esc(facts.usage.tokens)}</span>`))+(facts.usage?.minutes==null?'':row('Minutes answering','Time spent waiting for answers.',`<span>${esc(facts.usage.minutes)}</span>`)));
@@ -49,6 +49,15 @@
       const host=body.querySelector('[data-settings-section]');
       if(current==='model')await model(host,ticket);
       else host.innerHTML=current==='general'?general():current==='usage'?usage():about();
+      if(current==='general'){
+        try {
+          const response=await fetch('/api/voice/settings');
+          const voice=await response.json();if(ticket!==generation)return;
+          if(!response.ok)throw new Error(voice.error);
+          host.querySelector('[data-asr-model]').textContent=voice.asrModel||'No speech model loaded';
+          host.querySelector('[data-tts-model]').textContent=voice.ttsModel||'No voice model loaded';
+        }catch{if(ticket===generation){host.querySelector('[data-asr-model]').textContent='Unavailable';host.querySelector('[data-tts-model]').textContent='Unavailable';}}
+      }
       for(const entry of contributors.values())if(entry.section===current){host.insertAdjacentHTML('beforeend',entry.markup());entry.fill?.(host);}
       document.dispatchEvent(new CustomEvent('titanbot:settings-section',{detail:{id:current,host}}));
     }catch(error){if(ticket===generation)body.textContent=error.message;}
@@ -65,8 +74,12 @@
     const status=document.querySelector('[data-settings-status]');field.disabled=true;
     try{
       const name=field.dataset.setting;
-      const changes=name==='base'||name==='model'?{base:document.querySelector('[data-setting="base"]').value,model:document.querySelector('[data-setting="model"]').value}:{[name]:field.value};
+      const changes=name==='voiceMode'?{voice:{mode:field.value}}:name==='base'||name==='model'?{base:document.querySelector('[data-setting="base"]').value,model:document.querySelector('[data-setting="model"]').value}:{[name]:field.value};
       facts=await adapter().saveSettings(changes);
+      if(name==='voiceMode'){
+        global.__voice?.stop();
+        if(global.__voice){global.__voice._state.settings=facts.voice;global.__voice._adoptTalkMode(facts.voice.mode);}
+      }
       if((name==='base'||name==='model')&&current==='model')await model(document.querySelector('[data-settings-section]'),generation);
       if(name==='theme'){document.documentElement.dataset.theme=facts.theme;try{localStorage.setItem('machineRoom.theme',facts.theme);}catch{}}
       if(status)status.textContent=Object.keys(changes).some(key=>(key==='base'||key==='model')&&changes[key]!==facts[key])?'Saved; command-line or environment settings still override this value.':'Saved';

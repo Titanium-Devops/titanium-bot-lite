@@ -133,6 +133,12 @@ class ConsoleContractTests(unittest.TestCase):
                 self.assertFalse((CONSOLE / name).exists())
 
     @unittest.skipUnless(shutil.which('node'), 'Node is optional; needed for JavaScript syntax checks')
+    def test_voice_transport_without_browser(self):
+        result = subprocess.run([shutil.which('node'), 'tests/voice-contract.cjs'],
+                                cwd=ROOT, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is optional; needed for JavaScript syntax checks')
     def test_all_javascript_parses_without_browser(self):
         for path in CONSOLE.rglob('*.js'):
             with self.subTest(file=path.name):

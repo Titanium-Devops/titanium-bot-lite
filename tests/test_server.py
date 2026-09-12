@@ -109,8 +109,8 @@ class RouteTests(AppCase):
         self.assertEqual(restarted.get_settings()['persona'], 'Fresh persona é')
         for body in ({'unknown': True}, {'theme': 'bad'}, {'botName': []}, {'voice': {'enabled': 'yes'}}):
             self.request('PATCH', '/api/settings', body, 400)
-        self.request('PATCH', '/api/settings', {'talkEnabled': True}, 501)
-        self.request('PATCH', '/api/settings', {'voice': {'enabled': True}}, 501)
+        self.request('PATCH', '/api/settings', {'talkEnabled': True})
+        self.assertEqual(self.request('PATCH', '/api/settings', {'voice': {'enabled': True}})['voice']['mode'], 'push')
 
     def test_send_transcript_restart_and_pagination(self):
         sent = self.request('POST', '/api/send', {'agentId': 'titan', 'text': 'Hello é'})['message']

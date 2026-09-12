@@ -1,3 +1,7 @@
+/* Lite voice transport uses MediaRecorder uploads and same-origin WAV playback.
+ * The vendored call screen, desktop strip and avatar seams remain below.
+ * Older PCM/frame helpers are retained as public compatibility utilities.
+ */
 /*
  * VOICE-1 / VOICE-2 — the console's side of talking to your agent.
  * ----------------------------------------------------------------
@@ -1238,6 +1242,7 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     // deliberately: it calls the echo gate's release(), so an unmute landing mid-reply would drop the
     // echo hold and the microphone could hear Titan through the speaker for the 350 ms tail.
     state.talking = !call.muted;
+    if (call.muted) endRecording(true);
     paint();
   }
 
@@ -1511,108 +1516,153 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     return note != null && note.hidden !== true;
   }
 
+  // File-based speech: one recording, one ordinary Titan turn, one WAV reply.
+  let sessionGeneration = 0;
+  let turnPending = false;
+  let recorder = null;
+  let recordingStart = 0;
+  let heardEnergy = false;
+  let lastEnergy = 0;
+  let discardRecording = false;
+  let speechContext = null;
+  let speechStream = null;
+  let inputMeter = null;
+  let outputMeter = null;
+  let outputSource = null;
+  let meterTimer = null;
+  let voiceAbort = null;
+  let echoUntil = 0;
+
+  function rms(analyser) {
+    if (!analyser) return 0;
+    const samples = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(samples);
+    return Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+  }
+
+  function recordTurn() {
+    if (!state.on || turnPending || recorder || !speechStream || !state.talking || Date.now() < echoUntil) return;
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/wav'].find(type => global.MediaRecorder.isTypeSupported(type));
+    if (!mime) { stop('cannot-record', 'This browser cannot record WebM or WAV audio.'); return; }
+    const current = new global.MediaRecorder(speechStream, { mimeType: mime });
+    const generation = sessionGeneration;
+    const chunks = [];
+    recorder = current;
+    recordingStart = Date.now();
+    heardEnergy = false;
+    lastEnergy = recordingStart;
+    discardRecording = false;
+    current.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+    current.onerror = () => stop('cannot-record', 'The microphone could not finish recording.');
+    current.onstop = () => {
+      if (generation !== sessionGeneration) return;
+      recorder = null;
+      const discard = discardRecording || (!state.held && talkMode() === 'always' && !heardEnergy);
+      if (!discard && chunks.length) void postVoice(new Blob(chunks, { type: mime }), mime, generation);
+    };
+    current.start();
+  }
+
+  function endRecording(discard = false) {
+    if (!recorder || recorder.state === 'inactive') return;
+    discardRecording = discard;
+    recorder.stop();
+  }
+
+  async function postVoice(blob, mime, generation) {
+    turnPending = true;
+    orb('thinking');
+    voiceAbort = new AbortController();
+    try {
+      const form = new FormData();
+      form.append('file', blob, mime.includes('webm') ? 'recording.webm' : 'recording.wav');
+      const response = await relayFetch('/api/voice/turn', { method: 'POST', body: form, signal: voiceAbort.signal });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Titan could not finish this voice turn.');
+      if (generation !== sessionGeneration) return;
+      state.lastHeard = result.heard;
+      state.lastSaid = result.said;
+      // The server saved both lines, including the Spoken chip. SSE reloads them.
+      await adapter()?.refresh?.();
+      if (generation !== sessionGeneration) return;
+      overlayPartial(result.heard, generation);
+      dissolve();
+      const responseAudio = await relayFetch(result.audio, { signal: voiceAbort.signal });
+      if (!responseAudio.ok) throw new Error('That recording is no longer available.');
+      const bytes = await responseAudio.arrayBuffer();
+      const context = speechContext;
+      const buffer = await context.decodeAudioData(bytes);
+      if (generation !== sessionGeneration) return;
+      outputSource = context.createBufferSource();
+      outputSource.buffer = buffer;
+      outputSource.connect(outputMeter);
+      outputMeter.disconnect?.();
+      outputMeter.connect(context.destination);
+      orb('speaking');
+      await new Promise(resolve => {
+        outputSource.onended = resolve;
+        outputSource.start();
+      });
+      if (generation !== sessionGeneration) return;
+      outputSource.disconnect?.();
+      outputSource = null;
+      echoUntil = Date.now() + 350;
+      orb('listening');
+    } catch (error) {
+      if (generation === sessionGeneration && error.name !== 'AbortError') stop('line-dropped', error.message);
+    } finally {
+      if (generation === sessionGeneration) {
+        turnPending = false;
+        voiceAbort = null;
+      }
+    }
+  }
+
   async function start(options = {}) {
     if (state.on) return;
+    if (state.settings?.enabled !== true) { stop('disabled', 'Voice is switched off in Settings.'); return; }
+    const generation = ++sessionGeneration;
     state.on = true;
-    state.byeReason = "";
-    // Asked again on every line, because the relay on the other end of the next one may not be the
-    // relay that answered the last.
-    state.labelled = false;
+    state.byeReason = '';
     clearNotes();
-    // The relay owns the orb once the line is up; until `ready` arrives there is no frame to obey,
-    // and "thinking" is the honest one of the four for a line that is being dialled.
-    // PUSH TO TALK CAPTURES BEFORE THE LINE IS UP, and only push to talk does.
-    //
-    // The dial is not free -- 1.6 to 2.0 s through console.titanium.bot -- and in push to talk the
-    // person is already talking into a button they are holding down, so a capture that waited for the
-    // socket would lose the first words of every first hold. Those frames go into a bounded queue and
-    // are flushed the instant the socket opens.
-    //
-    // ALWAYS LISTENING KEEPS THE OLD ORDER, socket first, because there the press is a toggle and a
-    // line that is refused should never have touched the microphone at all. Holding a button down is a
-    // different kind of consent from pressing one.
-    const captureFirst = options.captureFirst === true;
-    // In always listening the microphone is open for the whole call and opening the line is what asks
-    // for that. In push to talk the hold is what asks, and holdStart has already said so.
-    //
-    // VOICE-13 adds the third way of asking: the call screen is hands free for its whole life whatever
-    // this browser's talk mode says, because the screen itself is the consent. It does NOT take
-    // captureFirst -- that comment below says why a refused line should never have touched the
-    // microphone, and a press on a phone is a press and not a hold.
-    if (talkMode() !== "push" || options.handsFree === true) state.talking = true;
-    // The relay owns the orb once the line is up; until `ready` arrives there is no frame to obey,
-    // and "thinking" is the honest one of the four for a line that is being dialled.
-    orb("thinking");
-    state.gate = echoGate({ sampleRate: SAMPLE_RATE });
-    state.sound = player({ gate: state.gate });
-    state.tailFrames = 0;
-
-    // The queue is bounded at two seconds. The relay drops audio more than three seconds ahead of its
-    // own wall clock and counts it as a held frame, so a queue that grew without a ceiling would arrive
-    // as a burst the relay throws away -- which looks exactly like a microphone that is not working.
-    let pending = [];
-    const sendFrame = (buffer) => {
-      const socket = state.socket;
-      if (socket != null && socket.readyState === 1) {
-        if (pending.length > 0) {
-          const queued = pending;
-          pending = [];
-          for (const one of queued) { try { socket.send(one); } catch { /* the close handler has it */ } }
-        }
-        try { socket.send(buffer); } catch { /* the close handler has it */ }
-        return;
-      }
-      if (!captureFirst) return;
-      pending.push(buffer);
-      while (pending.length > PENDING_FRAME_CAP) pending.shift();
-    };
-    // VOICE-11. The release sends through this same door, so its silence queues behind whatever the
-    // hold captured before the line was up and arrives in the order it was made.
-    state.sendAudio = sendFrame;
-    const beginCapture = () => captureAudio({
-      source: "microphone",
-      deviceId: state.micDeviceId,
-      sampleRate: SAMPLE_RATE,
-      frameBytes: FRAME_BYTES,
-      held: () => state.gate.holding(),
-      // Push to talk between holds. In always listening nothing is ever muted this way and the echo
-      // gate is the only thing that drops a frame.
-      muted: () => !state.talking,
-      onChunk: (buffer) => {
-        sendFrame(buffer);
-        // The tap window below closes on the FIRST frame rather than on its timer, so a hold that was
-        // only just long enough pays nothing at all for the rule that catches a tap.
-        if (graceOpen()) finishHold();
-      },
-    });
-
-    if (captureFirst) {
-      try { state.capture = await beginCapture(); watchForSound(); }
-      catch (error) { stop(micConditionFor(error)); return; }
-    }
+    state.talking = talkMode() === 'always' || options.handsFree === true || state.held;
+    orb('thinking');
     try {
-      await openSocket();
-    } catch {
-      // A socket that never opened is the void answer this console has been burned by before: a
-      // relay that is down and a workspace that was never set up look identical from here. So the
-      // page says the sentence that covers both and offers the card that fixes one of them.
-      stop("no-key");
-      return;
+      if (!global.MediaRecorder || !global.navigator?.mediaDevices?.getUserMedia) throw new Error('Use a browser with microphone access on HTTPS or localhost.');
+      const AudioContextClass = global.AudioContext || global.webkitAudioContext;
+      speechContext = new AudioContextClass();
+      void speechContext.resume();
+      const stream = await global.navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: true, noiseSuppression: true,
+        ...(state.micDeviceId ? { deviceId: { exact: state.micDeviceId } } : {}),
+      } });
+      if (generation !== sessionGeneration) { stream.getTracks().forEach(track => track.stop()); return; }
+      speechStream = stream;
+      inputMeter = speechContext.createAnalyser();
+      outputMeter = speechContext.createAnalyser();
+      speechContext.createMediaStreamSource(stream).connect(inputMeter);
+      state.capture = { stats: { micLevel: 0, sent: 0 }, stop: () => stream.getTracks().forEach(track => track.stop()) };
+      state.sound = { level: () => state.orb === 'speaking' ? rms(outputMeter) : 0, stats: () => ({}), currentTime: () => speechContext?.currentTime || 0 };
+      state.ready = {};
+      orb('listening');
+      recordTurn();
+      meterTimer = global.setInterval(() => {
+        const level = state.talking && !turnPending ? rms(inputMeter) : 0;
+        state.capture.stats.micLevel = level;
+        if (!state.talking) { endRecording(true); return; }
+        if (turnPending) return;
+        recordTurn();
+        if (!recorder) return;
+        const now = Date.now();
+        if (level > 0.015) { heardEnergy = true; lastEnergy = now; }
+        if (talkMode() === 'always' || call.up) {
+          if ((heardEnergy && now - lastEnergy >= 700) || now - recordingStart >= 8000) endRecording(!heardEnergy);
+        } else if (!state.held) endRecording();
+        else if (now - recordingStart >= 60000) { state.held = false; state.talking = false; endRecording(); }
+      }, 50);
+    } catch (error) {
+      if (generation === sessionGeneration) stop('cannot-record', error.message);
     }
-    // WHATEVER WAS CAPTURED WHILE THE LINE WAS STILL OPENING GOES NOW, in order, and whether or not the
-    // button is still down. Flushing it only on the next frame that is allowed through would lose a
-    // hold SHORTER than the dial entirely: every frame after the release is muted, so the queue would
-    // sit there holding the only words that were ever said and never send them.
-    if (pending.length > 0) {
-      const queued = pending;
-      pending = [];
-      for (const one of queued) { try { state.socket?.send(one); } catch { /* the close handler has it */ } }
-    }
-    if (!captureFirst) {
-      try { state.capture = await beginCapture(); watchForSound(); }
-      catch (error) { stop(micConditionFor(error)); return; }
-    }
-    reportHeld();
   }
 
   // The held count the page actually dropped, sent to the relay so one number can be reconciled
@@ -1635,6 +1685,21 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
   }
 
   function stop(condition, text, options = {}) {
+    ++sessionGeneration;
+    voiceAbort?.abort();
+    voiceAbort = null;
+    global.clearInterval(meterTimer);
+    meterTimer = null;
+    endRecording(true);
+    recorder = null;
+    try { outputSource?.stop(); } catch { /* already finished */ }
+    outputSource = null;
+    try { speechContext?.close(); } catch { /* already closed */ }
+    speechContext = null;
+    speechStream?.getTracks().forEach(track => track.stop());
+    speechStream = null;
+    inputMeter = outputMeter = null;
+    turnPending = false;
     clearDismiss();
     if (heldTimer != null) { global.clearInterval(heldTimer); heldTimer = null; }
     // VOICE-11. Everything this wave arms comes down here, and BEFORE the socket goes: a tail still
@@ -1733,7 +1798,7 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     // screen must never make Talk dead on a phone, so a throw here falls through to the behaviour this
     // control has had since VOICE-7. A line that is ALREADY up falls through too, so a window narrowed
     // mid-call keeps the press that ends it.
-    if (callWanted() && !state.on) {
+    if (talkMode() === "always" && callWanted() && !state.on) {
       try { openCall(); return undefined; }
       catch { /* fall through to the hold or the toggle below */ }
     }
@@ -1769,78 +1834,22 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
 
   // Push to talk. The first hold opens the line; later holds are instant because it is still up.
   async function holdStart() {
-    if (state.held) {
-      // Two events of ONE gesture land in the same few milliseconds, and the second must never end the
-      // first. A press this long after the hold began is a NEW press whose predecessor's release was
-      // lost, so that hold is ended properly -- tail and all -- rather than left open underneath it.
-      if (clockNow() - heldAtMs < GESTURE_MS) return;
-      holdEnd();
-    }
-    if (pressIsSpent()) return;
-    // A NOTE ON SCREEN IS THE MODE, which is the same rule the toggle keeps and for the same reason.
-    // While a refusal is standing the first press CLEARS it rather than dialling into the refusal
-    // again; without this, holding the button on a workspace with talking switched off redials every
-    // time and there is no way out of it. That loop is what Jason was stuck in: "you can't exit out of
-    // this talk mode" (VOICE-6).
-    //
-    // VOICE-11: only while the refusal is FRESH. Shipped, that press never dialled however old the
-    // sentence was, so after a refusal -- or a dropped line -- every start cost two presses, with
-    // nothing on screen to say the first had been spent. A sentence the person has had time to read is
-    // cleared AND dialled by one press; a sentence younger than the cooldown is only cleared, which is
-    // what keeps the second event of one gesture, and a reflex re-press, out of the same refusal.
-    if (!state.on && state.notes.length > 0) {
-      const standing = state.notes[0];
-      const fresh = clockNow() - Number(standing?.at ?? 0) < REARM_COOLDOWN_MS;
-      pressSpentAt = clockNow();
-      clearNotes();
-      if (fresh) return;
-    }
+    if (state.held || turnPending) return;
     state.held = true;
-    heldAtMs = clockNow();
-    holdSentBase = state.capture?.stats.sent ?? 0;
     state.talking = true;
-    clearGrace();
-    cancelTail();
-    clearIdleClose();
-    armMaxHold();
     paint();
-    if (state.on) return;
-    await start({ captureFirst: true });
+    if (!state.on) await start();
+    else recordTurn();
   }
 
   function holdEnd() {
-    if (!state.held) return;
     state.held = false;
-    clearMaxHold();
-    // A RELEASE BEFORE THE FIRST FRAME HAS GONE IS A TAP, and a tap used to shut the microphone having
-    // sent nothing at all -- at the 1800 ms dial console.titanium.bot has, a tap opened a whole line
-    // and said nothing into it. So the microphone stays open until one frame has gone or MIN_HOLD_MS
-    // has passed, whichever comes first, and `talking` stays true through that window because it is
-    // what lets a frame go at all. The button is repainted at once: the hold really is over.
-    if (state.talking && framesThisHold() === 0) {
-      paint();
-      openGrace();
-      return;
-    }
-    finishHold();
+    state.talking = false;
+    endRecording();
+    paint();
   }
 
-  // The end of a hold, by whichever of the three roads got here: an ordinary release, the tap window
-  // expiring, or the first frame arriving inside it.
-  function finishHold() {
-    clearGrace();
-    state.talking = false;
-    // The TURN ends the way it ends in the other mode: the provider's own turn detection notices the
-    // silence. We do NOT send the provider's manual commit, because that needs turn detection switched
-    // off in the session frame, and this bridge writes that frame exactly once and byte-identically
-    // for the life of the socket -- rewriting it re-bills the whole conversation on one of the two
-    // services. What VOICE-11 changed is that the silence is now SENT: turn detection fires on audio
-    // that keeps arriving, and a wire that simply stopped is not silence to it.
-    if (framesThisHold() > 0) sendReleaseTail();
-    else { note("hold-to-talk"); armDismiss(); }
-    paint();
-    armIdleClose();
-  }
+  function finishHold() { holdEnd(); }
 
   // ------------------------------------------------------------- VOICE-11: the tail, and the tap
   let tailTimer = null;
@@ -1989,7 +1998,7 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     // private window that refuses site data -- each of those leaves the button doing exactly what was
     // asked of it, and the only thing lost is that the choice does not travel. docs/VOICE.md 13 says
     // which half is which.
-    void writeSettings({ talkMode: next }).then((saved) => { if (saved != null) state.settings = saved; }).catch(() => {});
+    void writeSettings({ mode: next }).then((saved) => { if (saved != null) state.settings = saved; }).catch(() => {});
     if (changed && state.on) { stop(); return next; }
     paint();
     return next;
@@ -2113,32 +2122,6 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     return true;
   }
 
-  function socketUrl() {
-    const location = global.location;
-    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    return `${scheme}//${location.host}/voice/socket`;
-  }
-
-  function openSocket() {
-    return new Promise((resolve, reject) => {
-      const SocketClass = global.__voiceSocketClass ?? global.WebSocket;
-      if (SocketClass == null) { reject(new Error("no websocket")); return; }
-      const socket = new SocketClass(socketUrl());
-      socket.binaryType = "arraybuffer";
-      let settled = false;
-      socket.addEventListener("open", () => { settled = true; state.socket = socket; resolve(socket); });
-      // An error with no close code is indistinguishable from the relay being down. MEASURED: an
-      // unknown upgrade path answers zero bytes with no status line and Chrome reports only
-      // onerror. So the refusal this page shows is words either way, never silence.
-      socket.addEventListener("error", () => { if (!settled) { settled = true; reject(new Error("socket error")); } });
-      socket.addEventListener("close", (event) => {
-        if (!settled) { settled = true; reject(new Error("socket closed")); return; }
-        onClose(event);
-      });
-      socket.addEventListener("message", (event) => onMessage(event));
-    });
-  }
-
   function onClose(event) {
     // MEASURED in real Chrome against a refused upgrade: the socket fires `error` AND THEN `close`
     // with code 1006. Without this guard the close arrives after start() has already said the useful
@@ -2255,9 +2238,9 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
 
   // ------------------------------------------------------------------ settings
   async function readSettings() {
-    const response = await relayFetch("/api/settings", { headers: { accept: "application/json" } });
+    const response = await relayFetch("/api/voice/settings", { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(`voice settings unavailable (${response.status})`);
-    return (await response.json()).voice;
+    return await response.json();
   }
 
   async function writeSettings(body) {
@@ -2292,7 +2275,7 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     const capSeconds = Number(value.dayCapSeconds) || 0;
     return {
       enabled: value.enabled === true,
-      available: value.available === true || (value.available == null && value.apiKeySet === true),
+      available: Boolean(value.asrModel && value.ttsModel),
       // THE MINUTES TRAVEL WITH THE ANSWER, because the row that draws them is one read away in
       // Settings and a second round trip for two numbers the relay already sent is a second chance
       // to disagree with itself. They are OMITTED, not zeroed, when this workspace has no day cap:
@@ -2673,15 +2656,15 @@ registerProcessor("voice-capture", VoiceCaptureProcessor);
     // air wins. docs/VOICE.md 13.
     const askedAt = clockNow();
     try {
-      const response = await relayFetch("/api/settings", { headers: { accept: "application/json" } });
+      const response = await relayFetch("/api/voice/settings", { headers: { accept: "application/json" } });
       available = response.status !== 404;
       if (response.ok) {
-        state.settings = (await response.json().catch(() => null))?.voice ?? null;
+        state.settings = await response.json().catch(() => null);
         // VOICE-10. The person's own talk mode, adopted HERE rather than read on its own: boot already
         // asks this door, and a second request for one field is a second chance for the two answers to
         // disagree about the same thing. Absent -- an older relay, or a person who has never chosen --
         // leaves this browser's stored value as the behaviour, which boot() already applied.
-        adoptTalkMode(state.settings?.talkMode, askedAt);
+        adoptTalkMode(state.settings?.mode, askedAt);
       }
     } catch {
       // A relay that did not answer at all may answer in a second. Leaving the button live is the

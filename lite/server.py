@@ -377,7 +377,7 @@ class App:
         (self.root / "keys.json").chmod(0o600)
         self.settings = dict(theme="dusk", background="titan-nebula", language="en", botName="Titan",
                              askBefore="", talkEnabled=False, micDeviceId="", voice=dict(
-                                 enabled=False, vendor="device", voice="", minutesToday=0))
+                                 enabled=False, mode="off", vendor="device", voice="", minutesToday=0))
         if (self.root / "settings.json").exists():
             saved = json.loads((self.root / "settings.json").read_text())
             self.settings.update({k: v for k, v in saved.items() if k in self.settings})
@@ -404,6 +404,9 @@ class App:
             self.save_messages()
         self.stopping = threading.Event()
         self.active = False
+        self.voice_waiters = {}
+        from .voice import Voice
+        self.voice = Voice(self)
         self.tokens = 0
         self.seconds = 0.0
         self.worker = threading.Thread(target=self._work, name="Titan turns", daemon=True)
@@ -426,6 +429,8 @@ class App:
         self.poke()
         self.worker.join(timeout=2)
         self.scheduler.thread.join(timeout=2)
+        self.voice.thread.join(timeout=2)
+        self.voice.close()
         for handler in self.device.log.handlers:
             handler.close()
 
@@ -451,7 +456,7 @@ class App:
             raise Refusal("One of these settings cannot be changed.")
         for key, value in body.items():
             if key == "voice":
-                if not isinstance(value, dict) or set(value) - {"enabled", "vendor", "voice", "minutesToday"}:
+                if not isinstance(value, dict) or set(value) - {"enabled", "mode", "vendor", "voice", "minutesToday"}:
                     raise Refusal("Voice settings must be an object with known fields.")
                 if "enabled" in value and not isinstance(value["enabled"], bool):
                     raise Refusal("Voice must be on or off.")
@@ -459,13 +464,11 @@ class App:
                     raise Refusal("Voice choices must be text.")
                 if "minutesToday" in value and value["minutesToday"] != self.settings["voice"]["minutesToday"]:
                     raise Refusal("Talking time is measured by the server.")
-                if value.get("enabled"):
-                    raise Refusal("Speech is not available yet.", 501)
+                if "mode" in value and value["mode"] not in ("off", "push", "always"):
+                    raise Refusal("Choose off, push to talk or always listening.")
             elif key == "talkEnabled":
                 if not isinstance(value, bool):
                     raise Refusal("Talk must be on or off.")
-                if value:
-                    raise Refusal("Speech is not available yet.", 501)
             elif not isinstance(value, str) or len(value) > 32000:
                 raise Refusal("This setting needs a short piece of text.")
         if body.get("theme", "dusk") not in ("dusk", "mist", "ink", "light", "dark", "system"):
@@ -483,16 +486,26 @@ class App:
                     atomic_write(self.root / "persona.md", value)
                 elif key == "voice":
                     self.settings[key].update(value)
+                    mode = value.get("mode", self.settings[key].get("mode", "off"))
+                    if "enabled" in value and "mode" not in value:
+                        mode = "push" if value["enabled"] else "off"
+                    self.settings[key].update(mode=mode, enabled=mode != "off")
+                    self.settings["talkEnabled"] = mode != "off"
                 else:
                     self.settings[key] = value
+                    if key == "talkEnabled":
+                        self.settings["voice"].update(enabled=value, mode="push" if value else "off")
             atomic_write(self.root / "settings.json", json.dumps(self.settings))
             self.poke()
             return self.get_settings()
 
     def save_config(self, changes):
         with self.lock:
-            if self.active or not self.jobs.empty():
+            if self.active or not self.jobs.empty() or self.voice.busy:
                 raise Refusal("Wait for Titan to finish before changing the configuration.", 409)
+            self.voice.close()
+            if self.voice.loaded:
+                raise Refusal("The device could not release its speech model. Please try again.", 503)
             path = self.root / "config.json"
             saved = DEFAULTS | json.loads(path.read_text()) | changes
             if any(not isinstance(v, str) or not v.strip() for k, v in changes.items()):
@@ -501,6 +514,7 @@ class App:
             Device(self.root, saved["base"], self.device.key, saved["model"])
             atomic_write(path, json.dumps(saved, indent=2) + "\n")
             self.config = load_config(self.root, self.overrides)
+            self.voice.tts_model = None
             for handler in self.device.log.handlers:
                 handler.close()
             self.device = Device(self.root, self.config["base"], self.config["key"], self.config["model"])
@@ -572,7 +586,7 @@ class App:
                                      name=self.device.resolved_model or self.device.model)],
                         routines=library["routines"], skills=library["skills"])
 
-    def send(self, body, attachments=None):
+    def send(self, body, attachments=None, *, spoken=False):
         text = body.get("text", "")
         if body.get("agentId") != "titan":
             raise Refusal("That conversation was not found.", 404)
@@ -582,6 +596,8 @@ class App:
             if self.jobs.full():
                 raise Refusal("Please wait for the queued replies.", 429)
             message = self.message("you", text.strip())
+            if spoken:
+                message["spoken"] = True
             if attachments:
                 message["attachments"] = attachments
             self.messages.append(message)
@@ -767,6 +783,7 @@ class App:
                 continue
             started = time.monotonic()
             run = None
+            reply = None
             conversation = "main"
             transcript = self.messages
             try:
@@ -838,6 +855,11 @@ class App:
                     self.seconds += time.monotonic() - started
                     self.active = False
                     self.poke()
+                with self.lock:
+                    waiter = self.voice_waiters.pop(job, None) if isinstance(job, str) else None
+                    if waiter:
+                        waiter[1].update(reply or dict(type="turn-failed", text="Titan could not finish this reply."))
+                        waiter[0].set()
                 self.jobs.task_done()
 
 
@@ -970,7 +992,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
-    def body(self):
+    def body(self, voice=False):
         origin = self.headers.get("Origin")
         if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
             raise Refusal("Open the console on this server before making changes.", 403)
@@ -991,6 +1013,11 @@ class Handler(BaseHTTPRequestHandler):
                 if part.get_filename():
                     filename = Path(part.get_filename()).name
                     suffix = Path(filename).suffix.lower()
+                    if voice:
+                        if name != "file" or suffix not in (".webm", ".wav") or not data or attachments:
+                            raise Refusal("Send one WebM or WAV recording.")
+                        attachments.append(dict(data=data, suffix=suffix, mime="audio/webm" if suffix == ".webm" else "audio/wav"))
+                        continue
                     if suffix not in (".txt", ".md", ".csv", ".json", ".png", ".jpg", ".jpeg", ".webp", ".pdf"):
                         raise Refusal("Use a text, picture or PDF file.")
                     path = self.server.app.root / "files" / (uuid.uuid4().hex + suffix)
@@ -1055,6 +1082,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             self.close_connection = True
             return
+        if verb == "GET" and path == "/api/voice/settings":
+            return self.respond(app.voice.settings())
+        if verb == "GET" and path.startswith("/api/voice/say/"):
+            return self.respond(app.voice.audio(path.removeprefix("/api/voice/say/")), content_type="audio/wav", headers={"Cache-Control": "private, no-store"})
+        if verb == "POST" and path == "/api/voice/turn":
+            _, recordings = self.body(voice=True)
+            if len(recordings) != 1:
+                raise Refusal("Send one WebM or WAV recording.")
+            return self.respond(app.voice.turn(recordings[0]))
         if verb == "GET" and path == "/api/health":
             return self.respond(dict(app="titanium-bot-lite", version=__version__))
         if verb == "GET" and path == "/api/state":
