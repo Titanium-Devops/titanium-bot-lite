@@ -1,4 +1,4 @@
-# Titanium Bot Lite, the spec
+# Titanium Tiiny Bot, the spec
 
 Status: draft, 2026-09-11. Owner: Jason Brashear. Written by the orchestrator; the sections marked
 "from the readers" are filled by the three readers named at the end.
@@ -58,7 +58,11 @@ push, no code sandboxes, no marketplace, no team of bots. One owner, one Titan, 
 ## Brand
 
 The Ti mark (`brand/ti-mark.svg`), Midnight #090D14, Signal Cyan #00C8F0, Titan the blob mascot.
-"Brought to you by Titanium Bot" on the sign-in door, the About row in Settings, and the README.
+The product name is "Titanium Tiiny Bot". "Brought to you by Titanium Bot" links to
+https://titanium.bot on the door, in Settings > About, and in the README. "Built for" with the
+Tiiny logo (`brand/tiiny-logo.svg`) links to https://tiiny.ai on the door (20 px high), in the
+console header (16 px high), and in About. The white Tiiny mark sits on a Midnight pill to
+retain contrast across themes. The command and Python package names stay unchanged.
 Copy for a person is plain words; no em dashes.
 
 ## What the readers found, folded in

@@ -23,14 +23,15 @@
     return group('usage','This process',(facts.usage?.tokens==null?'':row('Tokens used','Work completed since the server started.',`<span>${esc(facts.usage.tokens)}</span>`))+(facts.usage?.minutes==null?'':row('Minutes answering','Time spent waiting for answers.',`<span>${esc(facts.usage.minutes)}</span>`)));
   }
   function about(){
-    return group('about','Titanium Bot',`<a class="lite-attribution" href="https://titanium.bot" target="_blank" rel="noopener"><img src="brand/ti-mark.svg" alt="Ti">Brought to you by Titanium Bot</a>`+row('Version','The version running on this device.',`<span>${esc(facts.version)}</span>`)+(facts.budget?row('Measured budget','Memory, first page and start time.',`<span>${esc(facts.budget.rssMb)} MB · ${esc(facts.budget.firstPaintKb)} KB · ${esc(facts.budget.coldStartMs)} ms</span>`):''));
+    return group('about','Titanium Tiiny Bot',`<a class="lite-attribution" href="https://titanium.bot" target="_blank" rel="noopener"><img src="brand/ti-mark.svg" alt="Ti">Brought to you by Titanium Bot</a><a class="built-for" href="https://tiiny.ai" target="_blank" rel="noopener">Built for <img src="brand/tiiny-logo.svg" height="20" alt="Tiiny"></a>`+row('Version','The version running on this device.',`<span>${esc(facts.version)}</span>`)+(facts.budget?row('Measured budget','Memory, first page and start time.',`<span>${esc(facts.budget.rssMb)} MB · ${esc(facts.budget.firstPaintKb)} KB · ${esc(facts.budget.coldStartMs)} ms</span>`):''));
   }
   async function model(host,ticket){
-    host.innerHTML=group('model','Your device',row('API address','The OpenAI address shown in TiinyOS.',input('base',facts.base,'API address'))+row('Model','Use default for the first chat model your device lists.',`<input type="text" data-setting="model" aria-label="Model" value="${esc(facts.model)}" list="device-models"><datalist id="device-models"><option value="default">First chat model</option></datalist>`)+row('Model controls','Start and stop models in your device settings.','<span>On your device</span>'))
+    host.innerHTML=group('model','Your device',row('API address','The OpenAI address shown in TiinyOS.',input('base',facts.base,'API address'))+row('Model','Use default for the first chat model your device lists.',`<input type="text" data-setting="model" aria-label="Model" value="${esc(facts.model)}" list="device-models"><datalist id="device-models"><option value="default">First chat model</option></datalist>`)+row('Resolved model','The chat model Titan will use.',`<span data-resolved-model>${esc(facts.resolvedModel||'Not yet available')}</span>`)+row('Model controls','Start and stop models in your device settings.','<span>On your device</span>'))
       +group('preferences','Your preferences',row('Ask me before…','Things Titan should ask you about first.',input('askBefore',facts.askBefore,'Ask me before',true)))
       +group('connections','Other computers','<p>Connecting another computer or a cloud model is not available yet.</p>');
     try {
       const models=await adapter().getModels();if(ticket!==generation)return;
+      host.querySelector('[data-resolved-model]').textContent=models.live?.resolvedModel||'Not yet available';
       host.querySelector('#device-models').insertAdjacentHTML('beforeend',models.device.filter(m=>m.id!=='default').map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join(''));
     }catch(error){
       if(ticket===generation){const status=document.querySelector('[data-settings-status]');if(status)status.textContent='Device models are unavailable. You can still edit the API address and model.';}
@@ -66,6 +67,7 @@
       const name=field.dataset.setting;
       const changes=name==='base'||name==='model'?{base:document.querySelector('[data-setting="base"]').value,model:document.querySelector('[data-setting="model"]').value}:{[name]:field.value};
       facts=await adapter().saveSettings(changes);
+      if((name==='base'||name==='model')&&current==='model')await model(document.querySelector('[data-settings-section]'),generation);
       if(name==='theme'){document.documentElement.dataset.theme=facts.theme;try{localStorage.setItem('machineRoom.theme',facts.theme);}catch{}}
       if(status)status.textContent=Object.keys(changes).some(key=>(key==='base'||key==='model')&&changes[key]!==facts[key])?'Saved; command-line or environment settings still override this value.':'Saved';
     }catch(error){if(status)status.textContent=error.message;else ui().showToast(error.message);}

@@ -8,3 +8,6 @@ button { min-height:48px; padding:12px 24px; border:1px solid #80ccc6; border-ra
 button:focus-visible,a:focus-visible { outline:3px solid #8fd9e6;outline-offset:5px; }
 button:disabled { opacity:.65; }
 .lite-attribution { display:flex; align-items:center; justify-content:center; gap:10px; color:inherit; font-size:14px; min-height:48px; margin-top:36px; }
+
+.built-for { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:6px 12px; border-radius:22px; background:#090d14; color:#fff; font-size:14px; }
+.built-for img { display:block; height:20px; width:auto; }

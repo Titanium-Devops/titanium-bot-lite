@@ -289,3 +289,75 @@ Compileall, JavaScript syntax checks in the suite, and `git diff --check`
 passed; no external linter/typechecker is configured. Live socket behavior
 remains unverified in this sandbox. No dependencies, browser, or GUI were
 used. Only these four files changed; no commit was attempted as instructed.
+
+## Step 1d
+
+Date: 2026-09-11. Branding and model detection implemented; offline checks pass.
+Device selfcheck was executed but could not connect, so live device acceptance
+remains unverified. No browser or GUI was launched, no device key was printed,
+no dependency was added, and no commit was attempted. The starting tracked tree
+was clean; the uncommitted changes are limited to this step.
+
+Changed files and behavior:
+
+- `README.md`, `SPEC.md`, `lite/console/index.html`, `console.html`, and
+  `settings.js`: product name is Titanium Tiiny Bot in the page title, door
+  headline, header caption, About, and documentation. Command/package names
+  remain unchanged. The Titanium Bot attribution remains linked to
+  https://titanium.bot.
+- `lite/console/brand/tiiny-logo.svg`: byte-identical copy of the provided
+  `brand/tiiny-logo.svg`. Door, console header, and About link the Tiiny mark
+  and “Built for” text to https://tiiny.ai. Logo heights are 20 px on the door
+  and About, and 16 px in the header. `door-resources.json` includes the asset.
+- `lite/console/door.css` and `styles.css`: the provided logo is white, so a
+  Midnight (#090d14) pill supports it across themes. Calculated sRGB contrast
+  for the white logo and “Built for” text is **19.46:1**. Door headline contrast
+  is **14.42:1**, secondary text **9.72:1**. Header attribution remains present
+  at phone widths. These are source-based color calculations, not rendered
+  layout measurements.
+- `lite/server.py`: replaced the narrow chat/text/llm type allowlist with one
+  shared chat detector and resolver. `supports_chat: true` qualifies a row;
+  an explicit false excludes it. Only when the field is absent, capabilities
+  containing `main` or a type containing `Text-to-Text` qualify it. `default`
+  resolves to the first matching row. Unknown/untyped rows no longer qualify.
+  Explicit model IDs still bypass discovery. Inference and the model-list
+  route share the resolver, avoiding separate selection rules.
+- Resolved IDs appear in Titan's card after discovery or inference, and in
+  Settings > Model. The saved model remains `default`. Empty discovery and
+  connection changes clear the prior resolution; Settings displays “Not yet
+  available” when unresolved. State/settings reads do not initiate network calls.
+- `tests/test_config.py`: the exact Ornith row with `supports_chat`,
+  `Image-Text-to-Text`, `capabilities`, and `supported` reproduced the original
+  refusal before the fix and passes afterward. Tests cover precedence,
+  fallbacks, first-match selection, explicit IDs, display API fields, and stale
+  resolution clearing. `lite/VERSION` advances from **0.1.2 to 0.1.3**.
+
+Verification:
+
+- `python3 -m unittest`: **39 tests, 35 passed, 4 skipped**, exit 0. Skips are
+  the existing socket-dependent tests because this sandbox denies binding.
+- `python3 -m compileall -q lite tests` and `git diff --check` passed.
+  JavaScript syntax checks passed through the suite and `node --check`.
+  No external lint/typecheck tools are configured. Terminal HTML/asset checks
+  verified the product text, links, logo heights, source-copy equality, and
+  resource-manifest entry. `python3 -m lite --version` printed `0.1.3`.
+- Device command: `python3 -m lite --selfcheck --model default --data-dir
+  data/selfcheck-1d-device`, using the existing environment credential without
+  printing it. `--model default` explicitly exercises discovery.
+
+| Device selfcheck measurement | Result |
+| --- | ---: |
+| Idle high-water RSS | 29.75 MB |
+| Initial door resources | 23,197 bytes |
+| Fresh-process initialization | 61.78 ms |
+| First token | None |
+| Turn duration to connection failure | 4.52 ms |
+| Reply characters | 0 |
+| Budget passed | Yes |
+| Configured device turn passed | No (exit 1) |
+
+The sanitized failure was “Cannot reach the device. Check its address and that
+its model is running.” These numbers establish the local budget only; they do
+not establish live Ornith response performance. Live device inference, socket
+integration, and rendered layout remain the verification gaps. The report and
+all implementation changes are left uncommitted as instructed.

@@ -132,16 +132,16 @@ class ConfigTests(unittest.TestCase):
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
-        self.assertEqual((code, out, err), (0, '0.1.2\n', ''))
+        self.assertEqual((code, out, err), (0, '0.1.3\n', ''))
         self.assertFalse((self.root / 'config.json').exists())
-        self.assertEqual(__version__, '0.1.2')
+        self.assertEqual(__version__, '0.1.3')
 
     def test_settings_model_and_name_survive_restart(self):
         app = App(self.root)
         self.addCleanup(app.close)
         status, _, result = wire(app, 'PATCH', '/api/settings', {'base': 'http://new/v1', 'model': 'chosen', 'botName': 'Ada'})
         self.assertEqual(status, 200)
-        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.2'))
+        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.3'))
         app.close()
         restarted = App(self.root)
         self.addCleanup(restarted.close)
@@ -153,7 +153,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_default_resolves_first_chat_model_and_explicit_skips_discovery(self):
         device = Device(self.root, DEFAULTS['base'], '', 'default')
-        with patch.object(device, 'request', side_effect=[{'data': [{'id': 'embed-a'}, {'id': 'chat-a'}, {'id': 'chat-b'}]}, {}]) as request:
+        with patch.object(device, 'request', side_effect=[{'data': [{'id': 'embed-a', 'supports_chat': False}, {'id': 'chat-a', 'supports_chat': True}, {'id': 'chat-b', 'capabilities': ['main']}]}, {}]) as request:
             device.chat([], lambda token: None)
             self.assertEqual(request.call_args_list[0].args, ('/models',))
             self.assertEqual(request.call_args_list[1].args[1]['model'], 'chat-a')
@@ -166,3 +166,51 @@ class ConfigTests(unittest.TestCase):
             device.chat([], lambda token: None)
             request.assert_called_once()
             self.assertEqual(request.call_args.args[1]['model'], 'explicit')
+
+    def test_ornith_chat_discovery_and_resolved_model_surfaces(self):
+        row = {"id": "deepreinforce-ai/Ornith-1.0-35B", "type": "Image-Text-to-Text",
+               "supports_chat": True, "capabilities": ["main"],
+               "supported": ["Reasoning", "Tool Use"]}
+        app = App(self.root)
+        self.addCleanup(app.close)
+        with patch.object(app.device, 'request', side_effect=[{'data': [row]}, {}]) as request:
+            app.device.chat([{'role': 'user', 'content': 'Hello.'}], lambda token: None)
+            self.assertEqual(request.call_args_list[1].args[1]['model'], row['id'])
+        self.assertEqual(app.state()['workers'][0]['model'], row['id'])
+        self.assertEqual(app.get_settings()['resolvedModel'], row['id'])
+        self.assertEqual(app.get_settings()['model'], 'default')
+        app.device.resolved_model = None
+        with patch.object(app.device, 'request', return_value={'data': [row]}):
+            status, _, result = wire(app, 'GET', '/api/models')
+        self.assertEqual(status, 200)
+        self.assertEqual(result['live']['model'], row['id'])
+        self.assertTrue(result['device'][0]['running'])
+        self.assertEqual(app.state()['workers'][0]['model'], row['id'])
+        with patch.object(app.device, 'request', return_value={'data': []}):
+            status, _, result = wire(app, 'GET', '/api/models')
+        self.assertEqual(status, 200)
+        self.assertIsNone(result['live']['resolvedModel'])
+        self.assertIsNone(app.get_settings()['resolvedModel'])
+        app.device.resolved_model = row['id']
+        app.patch_settings({'base': 'http://new/v1'})
+        self.assertIsNone(app.get_settings()['resolvedModel'])
+
+    def test_chat_discovery_fallbacks_and_explicit_false(self):
+        device = Device(self.root, DEFAULTS['base'], '', 'default')
+        for row, accepted in [
+            ({'id': 'yes', 'supports_chat': True, 'type': 'embedding'}, True),
+            ({'id': 'no', 'supports_chat': False, 'capabilities': ['main'], 'type': 'Text-to-Text'}, False),
+            ({'id': 'main', 'capabilities': ['main']}, True),
+            ({'id': 'text', 'type': 'Text-to-Text'}, True),
+            ({'id': 'image-text', 'type': 'Image-Text-to-Text'}, True),
+            ({'id': 'unknown'}, False),
+            ({'id': 'embedding', 'type': 'embedding'}, False),
+        ]:
+            with self.subTest(row=row), patch.object(device, 'request', side_effect=[{'data': [row]}, {}]) as request:
+                if accepted:
+                    device.chat([], lambda token: None)
+                    self.assertEqual(request.call_args_list[1].args[1]['model'], row['id'])
+                else:
+                    with self.assertRaises(Refusal):
+                        device.chat([], lambda token: None)
+                    self.assertIsNone(device.resolved_model)

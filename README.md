@@ -1,6 +1,7 @@
-# Titanium Bot Lite
+# Titanium Tiiny Bot
 
 A small, local assistant for the Tiiny AI Pocket Lab, brought to you by [Titanium Bot](https://titanium.bot).
+Built for [Tiiny](https://tiiny.ai).
 
 Titan talks to the model on your pocket device. This first version runs on a Mac or Linux computer
 beside it and gives you chat, saved memories, an editable persona and a folder of skills.
@@ -93,7 +94,7 @@ is busy, choose another with `python3 -m lite --port 7789` or change `port` in `
 
 ## Version numbers
 
-The current version is `0.1.1`, stored in `lite/VERSION`, shown in Settings > About and printed
+The current version is `0.1.3`, stored in `lite/VERSION`, shown in Settings > About and printed
 by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
 `0.1.3`. The middle number changes only when Jason says so.
 

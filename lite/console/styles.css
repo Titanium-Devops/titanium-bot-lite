@@ -3345,3 +3345,16 @@ body[data-capability-menu] .window-bar {
 .lite-attribution { display:flex; align-items:center; justify-content:center; gap:10px; color:inherit; }
 .lite-attribution img { width:32px; height:32px; }
 
+
+/* The Tiiny mark is white; a Midnight surface keeps it readable in every theme. */
+.built-for { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:6px 12px; border-radius:22px; background:#090d14; color:#fff; font-size:14px; }
+.built-for img { display:block; width:auto; height:20px; }
+.window-product { display:grid; justify-items:start; gap:2px; }
+.window-product-name { font-size:11px; white-space:nowrap; }
+.window-product .built-for { min-height:26px; padding:4px 8px; font-size:11px; }
+.window-product .built-for img { height:16px; }
+.settings-card > .built-for { display:flex; width:max-content; margin:8px auto; }
+[data-resolved-model] { overflow-wrap:anywhere; }
+@media (max-width:690px) {
+  .window-identity .window-lockup { display:block; height:16px; }
+}

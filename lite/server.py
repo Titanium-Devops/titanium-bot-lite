@@ -199,6 +199,7 @@ class Device:
         if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise Refusal("Use a plain HTTP or HTTPS model address without embedded credentials.")
         self.base, self.key, self.model = base.rstrip("/"), key, model
+        self.resolved_model = None if model == "default" else model
         self.lane = OneLane(host=urllib.parse.urlsplit(base).hostname, key=key,
                             owner="Titanium Bot Lite", settle_s=0)
         self.busy_budget = 90.0
@@ -268,6 +269,29 @@ class Device:
             except (urllib.error.URLError, TimeoutError, OSError):
                 raise Refusal("Cannot reach the device. Check its address and that its model is running.", 503) from None
 
+    @staticmethod
+    def is_chat_model(row):
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]:
+            return False
+        if "supports_chat" in row:
+            return row["supports_chat"] is True
+        capabilities = row.get("capabilities")
+        kind = row.get("type")
+        return ((isinstance(capabilities, list) and "main" in capabilities)
+                or (isinstance(kind, str) and "Text-to-Text" in kind))
+
+    def resolve_model(self, rows=None):
+        if self.model != "default":
+            self.resolved_model = self.model
+            return self.model
+        self.resolved_model = None
+        if rows is None:
+            rows = self.request("/models").get("data", [])
+        self.resolved_model = next((row["id"] for row in rows if self.is_chat_model(row)), None)
+        if self.resolved_model is None:
+            raise Refusal("The device lists no chat models. Start a chat model on the device.", 503)
+        return self.resolved_model
+
     def chat(self, messages, on_token):
         if self.model == "echo":
             prompt = next(message["content"] for message in reversed(messages) if message["role"] == "user")
@@ -276,14 +300,7 @@ class Device:
                 on_token(answer[index:index + 8])
                 time.sleep(0.01)
             return {"total_tokens": 0}  # No model tokens were spent.
-        model = self.model
-        if model == "default":
-            models = self.request("/models").get("data", [])
-            model = next((m["id"] for m in models if isinstance(m.get("id"), str)
-                          and m["id"] and m.get("type", "chat") in ("chat", "text", "llm")
-                          and "embed" not in m["id"].lower()), None)
-            if model is None:
-                raise Refusal("The device lists no chat models. Start a chat model on the device.", 503)
+        model = self.resolve_model()
         return self.request("/chat/completions", dict(model=model, messages=messages,
                             stream=True, stream_options={"include_usage": True}, max_tokens=1000,
                             chat_template_kwargs={"enable_thinking": False}), on_token)
@@ -349,7 +366,8 @@ class App:
         self.worker.join(timeout=2)
 
     def live(self):
-        return dict(source="device", endpoint=self.device.base, model=self.device.model)
+        return dict(source="device", endpoint=self.device.base,
+                    model=self.device.resolved_model or self.device.model, resolvedModel=self.device.resolved_model)
 
     def budget(self):
         import resource
@@ -360,7 +378,7 @@ class App:
                     coldStartMs=round(self.cold_start_ms, 2))
 
     def get_settings(self):
-        return dict(copy.deepcopy(self.settings), base=self.device.base, model=self.device.model, persona=read_persona(self.root), version=__version__,
+        return dict(copy.deepcopy(self.settings), base=self.device.base, model=self.device.model, resolvedModel=self.device.resolved_model, persona=read_persona(self.root), version=__version__,
                     budget=self.budget(), usage=dict(tokens=self.tokens, minutes=round(self.seconds / 60, 3)))
 
     def patch_settings(self, body):
@@ -488,9 +506,10 @@ class App:
                         workers=[dict(id="titan", name=self.settings["botName"], role="Your local assistant",
                                       status="working" if self.active or not self.jobs.empty() else "idle",
                                       statusText="Answering" if self.active else "Ready", accent="cyan",
-                                      model=self.device.model, messages=copy.deepcopy(self.messages[-100:]),
+                                      model=self.device.resolved_model or self.device.model, messages=copy.deepcopy(self.messages[-100:]),
                                       files=files, hasOlder=len(self.messages) > 100)], rooms=[],
-                        models=[dict(id=self.device.model, name=self.device.model)],
+                        models=[dict(id=self.device.resolved_model or self.device.model,
+                                     name=self.device.resolved_model or self.device.model)],
                         routines=library["routines"], skills=library["skills"])
 
     def send(self, body, attachments=None):
@@ -791,8 +810,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(dict(messages=app.messages[start:end], hasOlder=start > 0))
         if verb == "GET" and path == "/api/models":
             payload = app.device.request("/models")
-            models = [dict(id=m["id"], name=m.get("name", m["id"]), running=m["id"] == app.device.model)
-                      for m in payload.get("data", [])]
+            try:
+                app.device.resolve_model(payload.get("data", []))
+            except Refusal:
+                pass  # Keep the model list available when no chat model is loaded.
+            app.poke()
+            models = [dict(id=m["id"], name=m.get("name", m["id"]), running=m["id"] == app.device.resolved_model)
+                      for m in payload.get("data", []) if isinstance(m, dict) and isinstance(m.get("id"), str)]
             return self.respond(dict(live=app.live(), device=models, lan=[], note="Start and stop models in the device's settings."))
         if verb in ("POST", "PATCH"):
             body, attachments = self.body()
