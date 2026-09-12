@@ -239,3 +239,18 @@ The pretty hostnames resolve to 127.0.0.1 on a Mac running the TiinyOS client, s
 | Text to speech | YES: POST /v1/audio/speech with the TTS model id and `input`, NO `voice` field ("Unsupported speaker: default" with one), returns audio/wav 24 kHz, 88 KB for one sentence. |
 | Speech to text | not run yet (needs a wav; the route is documented). |
 | The `default` model id | not tested; use exact ids from /v1/models. |
+
+## Jason's own Tiiny code to reuse (read 2026-09-11 20:05 CDT)
+
+- **onelane** (github.com/webdevtodayjason/onelane): one stdlib Python file, a kernel-held lock
+  file so two apps on one Tiiny take turns instead of failing with device error 150004; `who()`
+  says which app holds the device. Lite uses it as is, copied beside the code.
+- **story-lantern** (github.com/webdevtodayjason/story-lantern): stdlib-only Python app on a host
+  beside the device, same shape as Lite. Patterns to copy from lantern.py: one worker thread and
+  two lanes to the device; 150004 treated as weather with a backoff budget (busy_max_wait 90 s);
+  502 "Upstream model server request failed" treated as the other face of contention (the device
+  is reallocating the NPU); `chat_template_kwargs: {"enable_thinking": false}` to stop Ornith
+  reasoning; MIN_MAX_TOKENS 800 because reasoning counts against max_tokens and a small budget
+  returns empty content; a reasoning scavenger that pulls a usable object out of a reasoning dump;
+  TTS with `response_format: "mp3"`, loaded for a session and released after; the NPU budget in
+  units (Ornith 50, Z-Image 32, TTS 7); prefetch of the next page while the current one plays.
