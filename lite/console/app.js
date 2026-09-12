@@ -663,7 +663,7 @@
     if(kind==='files') {
       const files=[...contextRecord().files,...library.memories.map(m=>({name:m.name,path:m.path})),...library.skills.map(m=>({name:m.name,path:m.path}))];
       openPanel('Library','Files','<p><button class="secondary-button" data-memory-panel>Saved memories</button></p>'+files.map(f=>`<p><button class="secondary-button" data-attachment-open="${escapeHtml(f.path)}" data-attachment-name="${escapeHtml(f.name)}" data-attachment-agent="titan">${escapeHtml(f.name)}</button></p>`).join('')||'<p>No files yet. Add a file beside your message.</p>');
-    } else if(kind==='routines') openPanel('Library','Routines','<p>Scheduled routines are not available yet.</p>'+library.routines.map(r=>`<article class="routine-card"><strong>${escapeHtml(r.name)}</strong><p>${escapeHtml(r.cron)}</p></article>`).join(''));
+    } else if(kind==='routines') openPanel('Library','Routines','<p>Routines use local time. New routines stay paused until you enable them.</p>'+library.routines.map(r=>`<article class="routine-card"><strong>${escapeHtml(r.name)}</strong><p>${escapeHtml(r.cron)} · ${r.enabled?'Enabled':'Paused'}</p><p>${r.nextRunAt?'Next: '+escapeHtml(new Date(r.nextRunAt).toLocaleString()):'No upcoming run'}</p><button class="secondary-button" data-routine-id="${escapeHtml(r.id)}" data-routine-action="${r.enabled?'pause':'enable'}">${r.enabled?'Pause':'Enable'}</button><button class="ghost-button" data-routine-id="${escapeHtml(r.id)}" data-routine-action="delete">Delete</button><button class="secondary-button" data-routine-transcript="${escapeHtml(r.conversationId)}" data-routine-name="${escapeHtml(r.name)}">View results</button></article>`).join(''));
     else openPanel('Library','Skills','<p>Skills saved on this device.</p>'+library.skills.map(s=>`<article class="skill-card"><strong>${escapeHtml(s.name)}</strong><p>${escapeHtml(s.description)}</p><button class="secondary-button" data-skill-id="${escapeHtml(s.id)}" data-enabled="${s.enabled}">${s.enabled?'Disable':'Enable'}</button><button class="primary-button" data-run-skill="${escapeHtml(s.id)}"${s.enabled?'':' disabled'}>Run now</button></article>`).join(''));
   }
   async function openMemories() {
@@ -674,6 +674,9 @@
   elements.panelContent.addEventListener('click',async event=>{
     const memory=event.target.closest('[data-memory-panel]'),forgot=event.target.closest('[data-forget-memory]'),run=event.target.closest('[data-run-skill]');
     try{
+      const routine=event.target.closest('[data-routine-action]'),results=event.target.closest('[data-routine-transcript]');
+      if(routine){await adapter.libraryAction({kind:'routine',verb:routine.dataset.routineAction,id:routine.dataset.routineId});await openLibrary('routines');return;}
+      if(results){const response=await fetch('/api/transcript?agentId='+encodeURIComponent(results.dataset.routineTranscript));const data=await response.json();if(!response.ok)throw new Error(data.error);openPanel('Routines',results.dataset.routineName,data.messages.map(m=>`<article class="routine-card"><strong>${escapeHtml(m.authorName)}</strong><p>${escapeHtml(m.text)}</p></article>`).join(''));return;}
       if(memory){await openMemories();return;}
       if(forgot){await adapter.libraryAction({kind:'memory',verb:'forget',id:forgot.dataset.forgetMemory});await openMemories();return;}
       if(run){await adapter.libraryAction({kind:'skill',verb:'run',id:run.dataset.runSkill});showToast('Skill started');return;}

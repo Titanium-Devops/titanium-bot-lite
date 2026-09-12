@@ -113,24 +113,9 @@ def fetch_url(url):
 
 
 def validate_cron(schedule):
+    from .cron import Cron
     from .server import Refusal
     try:
-        fields = schedule.split()
-        if len(fields) != 5:
-            raise ValueError
-        for field, (minimum, maximum) in zip(fields, ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))):
-            for part in field.split(','):
-                bits = part.split('/')
-                if len(bits) > 2 or (len(bits) == 2 and not 1 <= int(bits[1]) <= maximum + 1):
-                    raise ValueError
-                if bits[0] == '*':
-                    continue
-                bounds = bits[0].split('-')
-                if len(bounds) not in (1, 2) or not all(b.isdecimal() for b in bounds):
-                    raise ValueError
-                values = list(map(int, bounds))
-                if not all(minimum <= n <= maximum for n in values) or values != sorted(values):
-                    raise ValueError
-        return ' '.join(fields)
-    except (ValueError, AttributeError):
+        return Cron(schedule).schedule
+    except (ValueError, TypeError):
         raise Refusal('Use a real five-field cron: minute hour day month weekday. Event-based routines cannot be set up because they wait on something rather than a clock.') from None

@@ -67,7 +67,7 @@
     "type": "function",
     "function": {
       "name": "update_state",
-      "description": "Remember or forget a fact, or save, update, pause or delete a disabled routine draft. Scheduled execution and resume are coming soon.",
+      "description": "Remember or forget a fact; create, update, enable, pause or delete a routine. Create routines disabled and tell the owner. Enable or resume only at the owner's explicit request.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -89,7 +89,8 @@
               "pause",
               "resume",
               "delete",
-              "set"
+              "set",
+              "enable"
             ]
           },
           "fact": {
@@ -122,7 +123,7 @@
           },
           "enabled": {
             "type": "boolean",
-            "description": "Routine drafts are always created switched off on this device. Execution is coming soon."
+            "description": "New routines are always disabled. Only enable an existing routine when the owner asks."
           },
           "description": {
             "type": "string"

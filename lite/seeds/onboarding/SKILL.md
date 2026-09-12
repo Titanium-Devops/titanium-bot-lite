@@ -59,7 +59,7 @@ One fact per call, each a full sentence that stands on its own, each under 500 c
 
 ## 5. Show them what you can do
 
-Use `run_skill` with `handbook-what-i-can-do` before making a promise. Tie one or two real capabilities to their work. Routines and voice are coming soon.
+Use `run_skill` with `handbook-what-i-can-do` before making a promise. Tie one or two real capabilities to their work. Routines run on a clock after the owner enables them. Voice is coming soon.
 
 ## 6. Ask what is first
 

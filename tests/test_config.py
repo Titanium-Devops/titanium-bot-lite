@@ -70,12 +70,17 @@ class ConfigTests(unittest.TestCase):
             self.assertNotIn('secret', (self.root / 'config.json').read_text())
 
     def test_busy_port_one_sentence_and_exit_one(self):
-        with patch('lite.server.Server', side_effect=OSError(errno.EADDRINUSE, 'Address in use')):
+        with patch('lite.server.lite_is_running', return_value=False), patch('lite.server.Server', side_effect=OSError(errno.EADDRINUSE, 'Address in use')):
             code, out, err = self.cli('--port', '8123', '--model', 'echo')
         self.assertEqual(code, 1)
         self.assertEqual(out, '')
         self.assertEqual(err, f'Port 8123 is busy; choose another with --port or in {self.root / "config.json"}.\n')
         self.assertNotIn('Traceback', err)
+
+    def test_already_running_sentence_and_exit_zero(self):
+        with patch('lite.server.lite_is_running', return_value=True), patch('socket.create_connection', side_effect=ConnectionRefusedError), patch('lite.server.Server', side_effect=OSError(errno.EADDRINUSE, 'busy')):
+            code, out, err = self.cli('--port', '8123', '--model', 'echo')
+        self.assertEqual((code, out, err), (0, 'Titanium Tiiny Bot is already running at http://localhost:8123\n', ''))
 
     def test_loopback_listener_refuses_before_binding(self):
         for host in ('127.0.0.1', '::1'):
@@ -86,7 +91,7 @@ class ConfigTests(unittest.TestCase):
                         raise ConnectionRefusedError()
                     return contextlib.nullcontext()
 
-                with patch('socket.create_connection', side_effect=connect), patch('lite.server.Server') as server:
+                with patch('lite.server.lite_is_running', return_value=False), patch('socket.create_connection', side_effect=connect), patch('lite.server.Server') as server:
                     code, out, err = self.cli('--port', '8123', '--model', 'echo')
                 server.assert_not_called()
                 self.assertEqual((code, out, err), (1, '', f'Port 8123 is busy; choose another with --port or in {self.root / "config.json"}.\n'))
@@ -132,16 +137,16 @@ class ConfigTests(unittest.TestCase):
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
-        self.assertEqual((code, out, err), (0, '0.1.5\n', ''))
+        self.assertEqual((code, out, err), (0, '0.1.6\n', ''))
         self.assertFalse((self.root / 'config.json').exists())
-        self.assertEqual(__version__, '0.1.5')
+        self.assertEqual(__version__, '0.1.6')
 
     def test_settings_model_and_name_survive_restart(self):
         app = App(self.root)
         self.addCleanup(app.close)
         status, _, result = wire(app, 'PATCH', '/api/settings', {'base': 'http://new/v1', 'model': 'chosen', 'botName': 'Ada'})
         self.assertEqual(status, 200)
-        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.5'))
+        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.6'))
         app.close()
         restarted = App(self.root)
         self.addCleanup(restarted.close)

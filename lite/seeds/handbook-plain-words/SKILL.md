@@ -16,7 +16,7 @@ The model running on this device does my thinking. Choose it in Settings > Model
 
 ## Routine
 
-**What I say:** A routine is a job that runs on its own, on a clock: every weekday morning, say, or the first of the month. Here I can save one switched off; running on a schedule is coming soon.
+**What I say:** A routine is a job that runs on its own, on a clock: every weekday morning, say, or the first of the month. Here I save one switched off until you enable it. You can enable, pause or delete it and view its results in Routines.
 
 **The word on your screen:** `Routines`, in the row of buttons along the top.
 

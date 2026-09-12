@@ -492,3 +492,77 @@ source, without rendered visual inspection as instructed. Routines still do not
 run on a clock, voice is not connected, and pictures/PDFs are not decoded for the
 model; those remain later-step capabilities. Owner-edited existing personas and
 skills are preserved rather than overwritten on restart.
+
+## Step 4
+
+Implemented routines on cron and recognition of an already-running Lite process.
+Version: **0.1.6** (last component incremented from 0.1.5).
+
+Changes, in the requested order:
+
+1. `lite/cron.py`, `lite/routines.py`, `lite/server.py` and
+   `lite/agent_tools.py`: added a stdlib five-field cron parser/matcher with
+   wildcards, steps, ranges, lists, Sunday as 0 or 7, and traditional OR semantics
+   when both day-of-month and weekday are restricted. Schedules use server-local
+   time. A scheduler thread checks routine files every 30 seconds and feeds the
+   existing serialized turn worker and device lane. Startup calculates strictly
+   future occurrences, so downtime is never replayed. One occurrence per routine
+   can be pending at a time; missed minutes and a full queue do not build a backlog.
+   Accepted queued turns wait for the worker. Paused, deleted or rescheduled jobs
+   are checked again before execution.
+
+   Existing Step 3 storage is preserved: `routines/<id>/routine.json`, with
+   `name`, `prompt`, `schedule`, `enabled`, `createdAt` and `lastRunAt`, beside
+   `runs.json`. History holds the latest 20 records with a start time, finish
+   time, running/ok/error status and result or error detail. Results and tool
+   receipts use a separate `transcripts/routine-<id>.json` conversation named
+   for the routine, available through the transcript API and View results.
+
+2. `lite/console/app.js`, `lite/tools.json`, `lite/server.py`, `README.md` and
+   the capability, plain-words and onboarding seed skills: wired Enable, Pause,
+   Delete and View results in Routines; exposed actual enabled state and next
+   run time. `update_state` supports enable/resume, pause, update and delete.
+   Creation always saves disabled, even with `enabled: true`. Successful tool
+   turns that create routines include a switched-off notice in Titan's reply.
+   The same turn cannot immediately enable its new draft, and scheduled prompts
+   cannot enable routines. Existing owner-edited skills and personas remain intact;
+   the live prompt supplies the current routine capability and owner-enable rule.
+
+3. `lite/server.py`: added `GET /api/health` with Lite's identity and version.
+   On a busy port, a bounded loopback health probe recognizes this version of Lite,
+   prints exactly `Titanium Tiiny Bot is already running at http://localhost:<port>`
+   and exits 0. Other listeners retain the busy-port sentence and exit 1.
+
+4. `tests/test_routines.py` adds the twenty-row cron expression/time table,
+   next-date checks, due-once behavior, disabled and missed-run checks, restart
+   scheduling, lifecycle HTTP routes, separate transcripts and tool receipts,
+   failure history and worker survival, queued pause and serialization, capped
+   history, running status, actual device-lane acquisition with mocked transport,
+   creation notices and health identity checks. Updated obsolete Step 3 assertions
+   in `tests/test_agent_tools.py`, `tests/test_server.py` and
+   `tests/test_config.py`; added the already-running sentence/exit regression.
+   `lite/VERSION` contains 0.1.6. This section records the completed step.
+
+Simplifications: reused the existing queue, tool loop, device lane, transcript
+format, atomic writer and library mutation route. Cron validation and execution
+share one parser. No third-party dependencies or separate routine executor.
+
+Verification:
+
+- `python3 -m unittest`: **68 tests, 64 passed, 4 skipped**, exit 0.
+  The four existing skips are sandbox-denied live-loopback tests; offline HTTP
+  wire contracts and mocked health/device transport checks passed.
+- `python3 -m compileall -q lite tests`: passed.
+- Console JavaScript syntax checks with Node: passed as part of the suite.
+- `git diff --check`: passed, exit 0. macOS emitted sandbox cache/FSEvents
+  diagnostics during Git startup, without a diff-check failure.
+- `python3 -m lite --version`: **0.1.6**.
+- No separate linter or typechecker is configured. No browser or GUI was launched.
+
+Remaining verification limits: live device inference and real-socket startup
+recognition were not exercised in this sandbox. Console controls were checked
+through source/syntax and HTTP contracts, without rendered visual inspection.
+A pause stops future/queued work; a turn already executing can finish. Schedules
+follow the server's local timezone, and queue saturation skips occurrences rather
+than accumulating unbounded work. Voice and model start/stop remain later steps.
+No commit was attempted; the initially clean tree contains only this step's changes.

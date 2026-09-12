@@ -23,9 +23,11 @@ import uuid
 from datetime import datetime
 from email.parser import BytesParser
 from email.policy import default
+from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__
+from .routines import Scheduler, read_routines
 
 CONSOLE = Path(__file__).parent / "console"
 TOOLS = json.loads((Path(__file__).parent / "tools.json").read_text())
@@ -178,7 +180,11 @@ def build_prompt(root, text="", name=None):
                           HANDBOOK,
                           "Use run_skill to open handbook skills. Read and Write only see files/. "
                           "Credentials currently belong in local keys.json; no masked Settings box exists yet. "
-                          "If profile memory says setup is complete, that overrides the seed’s initial setup status.",
+                          "If profile memory says setup is complete, that overrides the seed’s initial setup status. "
+                          "Routines now run on five-field cron in local time. Create them disabled and tell the owner "
+                          "they are switched off until the owner enables them. Only enable or resume a routine "
+                          "when the owner explicitly asks. Scheduled prompts cannot enable routines.",
+                          "Saved routines:\n" + "\n".join(json.dumps(dict(id=p.parent.name, **r)) for p, r in read_routines(Path(root))),
                           "Saved memories:\n" + "\n".join(recall),
                           f"{len(memories) - len(recall)} more facts are saved on disk.",
                           "Available skills:\n" + catalog))
@@ -364,7 +370,9 @@ class App:
         self.tokens = 0
         self.seconds = 0.0
         self.worker = threading.Thread(target=self._work, name="Titan turns", daemon=True)
+        self.scheduler = Scheduler(self)
         self.worker.start()
+        self.scheduler.thread.start()
         self.cold_start_ms = (time.monotonic() - self.started) * 1000
 
     def poke(self):
@@ -372,13 +380,15 @@ class App:
             self.revision += 1
             self.changed.notify_all()
 
-    def save_messages(self):
-        atomic_write(self.root / "transcripts/main.json", json.dumps(self.messages, ensure_ascii=False))
+    def save_messages(self, transcript=None, conversation="main"):
+        atomic_write(self.root / "transcripts" / (conversation + ".json"),
+                     json.dumps(self.messages if transcript is None else transcript, ensure_ascii=False))
 
     def close(self):
         self.stopping.set()
         self.poke()
         self.worker.join(timeout=2)
+        self.scheduler.thread.join(timeout=2)
 
     def live(self):
         return dict(source="device", endpoint=self.device.base,
@@ -459,12 +469,14 @@ class App:
     def library(self):
         skills = [{k: v for k, v in s.items() if k != "body"} for s in read_skills(self.root)]
         routines = []
-        for path in sorted((self.root / "routines").glob("*/routine.json")):
-            if path.is_symlink() or path.parent.is_symlink():
-                continue
-            item = json.loads(path.read_text())
-            routines.append(dict(id=path.parent.name, name=item["name"], cron=item["schedule"],
-                                 nextRunAt=None, enabled=False, lastRun=item.get("lastRunAt")))
+        with self.lock:
+            for path, item in read_routines(self.root):
+                ident = path.parent.name
+                next_run = self.scheduler.next_runs.get(ident, (None, None))[1]
+                routines.append(dict(id=ident, name=item["name"], cron=item["schedule"],
+                                     nextRunAt=int(next_run * 1000) if next_run else None,
+                                     enabled=item.get("enabled") is True, lastRun=item.get("lastRunAt"),
+                                     conversationId="routine-" + ident))
         return dict(memories=read_memories(self.root), skills=skills, routines=routines)
 
     def library_action(self, body):
@@ -497,8 +509,8 @@ class App:
                         atomic_write(marker, "disabled\n")
                     else:
                         marker.unlink(missing_ok=True)
-            elif kind == "routine" and verb in ("run", "enable", "disable"):
-                raise Refusal("Scheduled routines are not available yet.", 501)
+            elif kind == "routine" and verb in ("enable", "disable", "pause", "delete"):
+                self.update_state(dict(target="routine", action={"disable": "pause"}.get(verb, verb), id=body.get("id")))
             else:
                 raise Refusal("That library action is not supported.")
             self.poke()
@@ -542,8 +554,14 @@ class App:
         return dict(id=uuid.uuid4().hex, authorId=author, authorName="You" if author == "you" else self.settings["botName"],
                     type=kind, text=text, time=now.strftime("%H:%M"), timestampMs=int(now.timestamp() * 1000), status="sent")
 
-    def tool_loop(self, messages, on_token, reply):
+    def tool_loop(self, messages, on_token, reply, transcript=None, conversation="main"):
+        transcript = self.messages if transcript is None else transcript
         total, rounds, empty = 0, 0, 0
+        created = set()
+        def finish():
+            if created:
+                on_token("\n\nNew routines are switched off until you enable them in Routines.")
+            return dict(total_tokens=total)
         while True:
             options = {}
             if empty == 2:
@@ -555,11 +573,11 @@ class App:
             total = total + int(count) if total is not None and count is not None else None
             message = usage.get("_message")
             if message is None:  # Echo and simple test clients stream directly.
-                return dict(total_tokens=total)
+                return finish()
             calls = message.get("tool_calls") or []
             if not calls:
                 if message.get("content"):
-                    return dict(total_tokens=total)
+                    return finish()
                 empty += 1
                 if empty > 2:
                     raise Refusal("The model returned no text after retrying. Please try again.", 502)
@@ -575,7 +593,13 @@ class App:
                     arguments = json.loads(call.get("function", {}).get("arguments", "{}"))
                     if not isinstance(arguments, dict):
                         raise ValueError
+                    if name == "update_state" and arguments.get("target") == "routine":
+                        enables = arguments.get("action") in ("enable", "resume") or arguments.get("enabled") is True
+                        if enables and (conversation != "main" or arguments.get("id") in created):
+                            raise Refusal("The owner must enable this routine in a later request or in Routines.")
                     result = self.run_tool(name, arguments)
+                    if name == "update_state" and arguments.get("target") == "routine" and arguments.get("action") == "create":
+                        created.add(result.split()[2])
                 except Refusal as error:
                     result = "Refused: " + str(error)
                 except (ValueError, TypeError, KeyError, OSError):
@@ -588,8 +612,8 @@ class App:
                     receipt = self.message("titan", name + (" refused" if result.startswith("Refused:") else " completed"), "system")
                     receipt["detail"] = result
                     receipt["toolCallId"] = call["id"]
-                    self.messages.insert(self.messages.index(reply), receipt)
-                    self.save_messages()
+                    transcript.insert(transcript.index(reply), receipt)
+                    self.save_messages(transcript, conversation)
                     self.poke()
 
     def update_state(self, args):
@@ -626,10 +650,10 @@ class App:
                 return "Remembered: " + fact
             if target == "routine":
                 from .agent_tools import validate_cron
-                if action == "resume" or args.get("enabled"):
-                    raise Refusal("Routines can be saved switched off. Scheduled execution is coming soon.")
-                if action not in ("create", "update", "pause", "delete"):
-                    raise Refusal("Choose create, update, pause or delete for a routine.")
+                if action not in ("create", "update", "pause", "delete", "enable", "resume"):
+                    raise Refusal("Choose create, update, enable, pause or delete for a routine.")
+                if "enabled" in args and type(args["enabled"]) is not bool:
+                    raise Refusal("Enabled must be true or false.")
                 ident = uuid.uuid4().hex if action == "create" else args.get("id", "")
                 if not isinstance(ident, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", ident):
                     raise Refusal("Choose a routine from the library.")
@@ -650,6 +674,7 @@ class App:
                 if action == "delete":
                     path.unlink()
                     (folder / "runs.json").unlink(missing_ok=True)
+                    self.scheduler.next_runs.pop(ident, None)
                     self.poke()
                     return "Deleted the routine."
                 for key in ("name", "prompt", "schedule"):
@@ -658,12 +683,15 @@ class App:
                 if any(not isinstance(item.get(k), str) or not item[k].strip() for k in ("name", "prompt", "schedule")):
                     raise Refusal("A routine needs a name, prompt and five-field cron schedule.")
                 item["schedule"] = validate_cron(item["schedule"])
-                item["enabled"] = False
+                item["enabled"] = (False if action in ("create", "pause") else
+                                   True if action in ("enable", "resume") else args.get("enabled", item.get("enabled", False)))
                 atomic_write(path, json.dumps(item, indent=2) + "\n")
                 if action == "create":
                     atomic_write(folder / "runs.json", "[]\n")
+                self.scheduler.next_runs.pop(ident, None)
+                self.scheduler.refresh(time.time())
                 self.poke()
-                return "Saved routine " + ident + " switched off. Scheduled execution is coming soon."
+                return "Saved routine " + ident + (" enabled." if item["enabled"] else " switched off. The owner must enable it before it runs.")
         raise Refusal("Choose memory, profile or routine as the target.")
 
     def run_tool(self, name, args):
@@ -684,41 +712,77 @@ class App:
     def _work(self):
         while not self.stopping.is_set():
             try:
-                ident = self.jobs.get(timeout=0.2)
+                job = self.jobs.get(timeout=0.2)
             except queue.Empty:
                 continue
             started = time.monotonic()
-            with self.lock:
-                self.active = True
-                end = next(i for i, m in enumerate(self.messages) if m["id"] == ident)
-                user = self.messages[end]
-                # Later queued user turns must not leak into this turn's history.
-                history = [m for m in self.messages[:end + 1] if m["type"] == "text"][-40:]
-                reply = self.message("titan", "", "working")
-                self.messages.insert(end + 1, reply)
-                self.poke()
-            def token(chunk):
-                with self.lock:
-                    reply["text"] += chunk
-                    self.poke()
+            run = None
+            conversation = "main"
+            transcript = self.messages
             try:
-                messages = [dict(role="system", content=build_prompt(self.root, user["text"], self.settings["botName"]))]
-                messages += [dict(role="user" if m["authorId"] == "you" else "assistant", content=m["text"] + ("\nAttached files: " + ", ".join(a["path"] for a in m["attachments"]) if m.get("attachments") else ""))
-                             for m in history]
-                usage = self.tool_loop(messages, token, reply)
                 with self.lock:
-                    reply["type"] = "text"
-                    count = (usage or {}).get("total_tokens")
-                    self.tokens = self.tokens + int(count) if self.tokens is not None and count is not None else None
-            except Exception as error:
+                    if isinstance(job, tuple):
+                        _, ident, due, signature = job
+                        row = next(((p, r) for p, r in read_routines(self.root) if p.parent.name == ident), None)
+                        if not row or row[1].get("enabled") is not True:
+                            continue
+                        path, routine = row
+                        if signature != (routine["schedule"], routine.get("createdAt")):
+                            continue
+                        conversation = "routine-" + ident
+                        transcript_path = self.root / "transcripts" / (conversation + ".json")
+                        transcript = json.loads(transcript_path.read_text()) if transcript_path.exists() else []
+                        user = self.message("you", routine["prompt"])
+                        user["conversationName"] = routine["name"]
+                        transcript.append(user)
+                        run = dict(id=uuid.uuid4().hex, trigger="cron", startedAt=int(time.time() * 1000),
+                                   finishedAt=None, status="running", detail="", conversationId=conversation)
+                        runs_path = path.parent / "runs.json"
+                        runs = json.loads(runs_path.read_text()) if runs_path.exists() else []
+                        runs = (runs + [run])[-20:]
+                        atomic_write(runs_path, json.dumps(runs))
+                        routine["lastRunAt"] = run["startedAt"]
+                        atomic_write(path, json.dumps(routine, indent=2) + "\n")
+                        end = len(transcript) - 1
+                    else:
+                        end = next(i for i, m in enumerate(transcript) if m["id"] == job)
+                        user = transcript[end]
+                    self.active = True
+                    history = [m for m in transcript[:end + 1] if m["type"] == "text"][-40:]
+                    reply = self.message("titan", "", "working")
+                    transcript.insert(end + 1, reply)
+                    self.save_messages(transcript, conversation)
+                    self.poke()
+                def token(chunk):
+                    with self.lock:
+                        reply["text"] += chunk
+                        self.poke()
+                try:
+                    messages = [dict(role="system", content=build_prompt(self.root, user["text"], self.settings["botName"]))]
+                    messages += [dict(role="user" if m["authorId"] == "you" else "assistant", content=m["text"] + ("\nAttached files: " + ", ".join(a["path"] for a in m["attachments"]) if m.get("attachments") else "")) for m in history]
+                    usage = self.tool_loop(messages, token, reply, transcript, conversation)
+                    with self.lock:
+                        reply["type"] = "text"
+                        count = (usage or {}).get("total_tokens")
+                        self.tokens = self.tokens + int(count) if self.tokens is not None and count is not None else None
+                except Exception as error:
+                    with self.lock:
+                        reply["type"] = "turn-failed"
+                        reply["text"] = str(error) if isinstance(error, Refusal) else "Titan could not finish this reply. Please try again."
                 with self.lock:
-                    reply["type"] = "turn-failed"
-                    reply["text"] = str(error) if isinstance(error, Refusal) else "Titan could not finish this reply. Please try again."
+                    self.save_messages(transcript, conversation)
+                    if run is not None and path.exists():
+                        run.update(finishedAt=int(time.time() * 1000), status="error" if reply["type"] == "turn-failed" else "ok", detail=reply["text"])
+                        atomic_write(runs_path, json.dumps(runs))
+            except (OSError, ValueError, TypeError):
+                # A malformed routine file cannot kill the shared turn worker.
+                pass
             finally:
                 with self.lock:
+                    if isinstance(job, tuple):
+                        self.scheduler.pending.discard(job[1])
                     self.seconds += time.monotonic() - started
                     self.active = False
-                    self.save_messages()
                     self.poke()
                 self.jobs.task_done()
 
@@ -937,6 +1001,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             self.close_connection = True
             return
+        if verb == "GET" and path == "/api/health":
+            return self.respond(dict(app="titanium-bot-lite", version=__version__))
         if verb == "GET" and path == "/api/state":
             return self.respond(app.state())
         if verb == "GET" and path == "/api/settings":
@@ -944,18 +1010,25 @@ class Handler(BaseHTTPRequestHandler):
         if verb == "GET" and path == "/api/library":
             return self.respond(app.library())
         if verb == "GET" and path == "/api/transcript":
-            if params.get("agentId", [""])[0] != "titan":
-                raise Refusal("That conversation was not found.", 404)
+            conversation = params.get("agentId", [""])[0]
+            transcript = app.messages
+            if conversation != "titan":
+                if not re.fullmatch(r"routine-[a-zA-Z0-9_-]{1,80}", conversation):
+                    raise Refusal("That conversation was not found.", 404)
+                target = app.root / "transcripts" / (conversation + ".json")
+                if not target.is_file() or target.is_symlink():
+                    raise Refusal("That conversation was not found.", 404)
+                transcript = json.loads(target.read_text())
             limit = max(1, min(200, int(params.get("limit", ["100"])[0])))
             with app.lock:
-                end = len(app.messages)
+                end = len(transcript)
                 before = params.get("before", [""])[0]
                 if before:
-                    end = next((i for i, m in enumerate(app.messages) if m["id"] == before), -1)
+                    end = next((i for i, m in enumerate(transcript) if m["id"] == before), -1)
                     if end < 0:
                         raise Refusal("That message was not found.", 404)
                 start = max(0, end - limit)
-                return self.respond(dict(messages=app.messages[start:end], hasOlder=start > 0))
+                return self.respond(dict(messages=transcript[start:end], hasOlder=start > 0))
         if verb == "GET" and path == "/api/models":
             payload = app.device.request("/models")
             try:
@@ -1016,6 +1089,20 @@ class Handler(BaseHTTPRequestHandler):
         raise Refusal("That page was not found.", 404)
 
 
+def lite_is_running(port):
+    # Bypass ambient proxies and inspect only bounded loopback responses.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for host in ("127.0.0.1", "[::1]"):
+        try:
+            with opener.open(f"http://{host}:{port}/api/health", timeout=0.5) as response:
+                payload = json.loads(response.read(4096))
+                if response.status == 200 and isinstance(payload, dict) and payload.get("app") == "titanium-bot-lite" and payload.get("version") == __version__:
+                    return True
+        except (OSError, ValueError, HTTPException):
+            pass
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Titanium Bot Lite")
     parser.add_argument("--bind", "--host", dest="bind")
@@ -1062,6 +1149,9 @@ def main():
     except OSError as error:
         app.close()
         if error.errno == errno.EADDRINUSE:
+            if lite_is_running(config["port"]):
+                print(f"Titanium Tiiny Bot is already running at http://localhost:{config['port']}")
+                return
             print(f"Port {config['port']} is busy; choose another with --port or in {root / 'config.json'}.", file=sys.stderr)
         else:
             print("Cannot bind the server; check --bind and --port or config.json.", file=sys.stderr)

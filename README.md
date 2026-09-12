@@ -4,8 +4,8 @@ A small, local assistant for the Tiiny AI Pocket Lab, brought to you by [Titaniu
 Built for [Tiiny](https://tiiny.ai).
 
 Titan talks to the model on your pocket device. This first version runs on a Mac or Linux computer
-beside it and gives you chat, file tools, saved memories, an editable persona and a folder of skills.
-Model start and stop, scheduled routines and speech are coming in later steps.
+beside it and gives you chat, file tools, saved memories, an editable persona, a folder of skills and scheduled routines.
+Model start and stop and speech are coming in later steps.
 
 Made by Titanium Computing. The full product, with a team of bots, mail, a browser and a computer of
 its own, is at https://titanium.bot.
@@ -72,7 +72,11 @@ are stored and viewable but are not decoded for the model yet.
 Profile facts are kept in every prompt along with the last 40 dated log facts. A fact over 500
 characters is refused rather than shortened. First-time setup begins with “What should I call
 you?”; say “run first-time setup” to repeat the interview. Change the persona in Settings > General.
-Routines can be saved as disabled drafts with a five-field clock schedule; they do not run yet.
+Routines use five-field cron schedules in the server’s local time. New routines stay switched off
+until you enable them in Routines or ask Titan to enable them. The panel also lets you pause or
+delete a routine and view its results. Keep Lite running: it checks clocks every 30 seconds,
+runs one turn at a time, and skips missed minutes instead of replaying them. Each routine keeps
+its latest 20 run records in `routines/<id>/runs.json`, beside its existing `routine.json`.
 
 On first run, the server creates `data/config.json` with every field below. Settings > Model
 saves the API address (`base`) and model there, including when the device is unavailable.

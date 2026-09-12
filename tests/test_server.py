@@ -143,8 +143,8 @@ class RouteTests(AppCase):
         for action in ('start', 'stop'):
             self.request('POST', '/api/model', {'action': action, 'id': 'echo'}, 501)
         self.request('POST', '/api/model', {'action': 'use', 'model': 'echo', 'baseUrl': 'http://elsewhere', 'apiKey': 'test-private-key'}, 501)
-        for verb in ('enable', 'disable', 'run'):
-            self.request('POST', '/api/library', {'kind': 'routine', 'verb': verb, 'id': 'daily'}, 501)
+        for verb in ('enable', 'disable', 'pause', 'delete'):
+            self.request('POST', '/api/library', {'kind': 'routine', 'verb': verb, 'id': 'daily'}, 404)
         for decision in ('approve', 'deny', 'always'):
             self.request('POST', '/api/decide', {'agentId': 'titan', 'entryId': 'missing', 'decision': decision}, 404)
         self.request('POST', '/api/decide', {'decision': 'invalid'}, 400)

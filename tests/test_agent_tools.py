@@ -213,7 +213,7 @@ class AgentToolTests(AppCase):
         self.assertTrue(all('refused' in m['text'] for m in receipts))
         self.assertEqual(read_memories(self.app.root), [])
 
-    def test_routine_storage_lifecycle_stays_disabled(self):
+    def test_routine_storage_lifecycle(self):
         base = dict(target='routine', action='create', name='Morning', prompt='Review notes')
         root = self.app.root / 'routines'
         for schedule in ('61 * * * *', '0 25 * * *', 'when mail arrives', '* * * *', '*/0 * * * *'):
@@ -228,8 +228,9 @@ class AgentToolTests(AppCase):
         self.assertEqual(json.loads((path.parent / 'runs.json').read_text()), [])
         ident = path.parent.name
         for args in (dict(action='resume'), dict(action='update', enabled=True)):
-            with self.assertRaisesRegex(Refusal, 'coming soon'):
-                self.app.run_tool('update_state', dict(target='routine', id=ident, **args))
+            self.app.run_tool('update_state', dict(target='routine', id=ident, **args))
+            self.assertTrue(json.loads(path.read_text())['enabled'])
+        self.app.update_state(dict(target='routine', action='pause', id=ident))
         original = path.read_text()
         with self.assertRaises(Refusal):
             self.app.run_tool('update_state', dict(target='routine', action='update', id=ident, schedule='bad cron'))
