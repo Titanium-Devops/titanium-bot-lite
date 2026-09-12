@@ -36,8 +36,8 @@ network. Keep that computer awake while you use Titan. No cloud account or paid 
    python3 -m lite
    ```
 
-5. On this computer, open `http://localhost:7777`. On your phone, join the same Wi-Fi and open
-   `http://YOUR-COMPUTER-ADDRESS:7777`, replacing `YOUR-COMPUTER-ADDRESS` with the computer's local
+5. On this computer, open `http://localhost:7788`. On your phone, join the same Wi-Fi and open
+   `http://YOUR-COMPUTER-ADDRESS:7788`, replacing `YOUR-COMPUTER-ADDRESS` with the computer's local
    IP address from its network settings. Press **Open your console** and send a message.
 
 Leave Terminal open. Press Control+C there to stop. Allow local connections if your computer asks.
@@ -62,9 +62,40 @@ characters. Skills are folders under `data/skills/`, each with a `SKILL.md` cont
 description at the top. Select a skill in the console to run its instructions as a chat prompt.
 Uploaded files can be viewed; Titan does not yet read their contents automatically.
 
-The server creates `data/keys.json` so that only your computer account can read or write it.
-Your environment's API key is used by the server and is never sent to the page. Back up `data/`
-to keep your conversation. To choose another folder, use `python3 -m lite --data-dir ./my-data`.
+On first run, the server creates `data/config.json` with every field below. Settings > Model
+saves the API address (`base`) and model there, including when the device is unavailable.
+Use `default` to choose the first chat model the device lists.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `base` | `http://openai.api.tiiny/v1` | Your device's OpenAI API address. |
+| `model` | `default` | The first chat model the device lists, or an exact model ID you choose. |
+| `port` | `7788` | The port for this console. |
+| `bind` | `0.0.0.0` | Listen on all network interfaces; use `127.0.0.1` for this computer only. |
+| `name` | `Titan` | Your assistant's name. |
+
+Command-line options `--base`, `--model`, `--key`, `--port`, `--bind` and `--name` take priority
+over environment values (`TIINY_BASE`, `TIINY_MODEL`, `TIINY_KEY`, `TIINY_PORT`), then
+`config.json`, then the defaults. Environment and command-line overrides still take priority
+over values saved through Settings. The API key stays separately in `data/keys.json`, with
+permissions `0600` (only your computer account can read or write it), and never in `config.json`
+or the page. Back up `data/` to keep your conversation. To choose another folder, use
+`python3 -m lite --data-dir ./my-data`.
+
+To inspect the effective settings with the key masked:
+
+```sh
+python3 -m lite --show-config
+```
+
+Port 7788 keeps Lite separate from the full product's local relay on 7777. If the selected port
+is busy, choose another with `python3 -m lite --port 7789` or change `port` in `config.json`.
+
+## Version numbers
+
+The current version is `0.1.1`, stored in `lite/VERSION`, shown in Settings > About and printed
+by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
+`0.1.3`. The middle number changes only when Jason says so.
 
 ## Check it without a device
 

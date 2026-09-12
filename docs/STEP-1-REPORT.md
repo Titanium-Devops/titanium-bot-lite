@@ -209,3 +209,68 @@ call, and verify host routing against the actual device before assuming the
 management API uses the inference host. Test refused loads and busy retries as
 well as successful operations. Later steps can add the tools, seeded skills,
 memory extraction, cron engine and speech bridge to the retained console seams.
+
+## Step 1b
+
+Date: 2026-09-11. Implementation and offline verification complete. No browser
+or GUI was launched. This section supersedes Step 1's port and configuration
+notes above. Commit creation remains blocked by the session's read-only `.git`.
+
+Changes:
+
+- `lite/server.py`: default port is 7788. A busy port prints one sentence naming
+  the chosen port, `--port` and the selected data directory's `config.json`, then
+  exits 1 without a traceback. Other bind failures have a separate plain error.
+- First run creates `<data dir>/config.json` with all five fields: `base`,
+  `model`, `port`, `bind` and `name`. The data directory defaults to `./data`;
+  `--data-dir` takes priority over `TIINY_DATA_DIR`. Settings resolve command
+  line, then the specified environment variables, then config, then defaults.
+  Keys remain separate in `keys.json` with mode 0600; environment/CLI overrides
+  are not copied into config. `--show-config` prints effective settings with
+  the key masked and does not initialize the app or contact the device.
+- `default` discovers the first chat model before inference rather than sending
+  the literal placeholder. Explicit model IDs bypass discovery; an empty chat
+  model list returns an actionable refusal. Discovery skips embedding IDs and
+  explicitly non-chat types; untyped model entries are treated as chat models.
+- Settings and the existing model route share configuration persistence through
+  the existing atomic writer. Base, model and assistant name survive restart.
+  Effective command-line/environment overrides continue to win after a save.
+  Active or queued turns prevent connection changes.
+- `lite/console/settings.js`: Model exposes address and model inputs even when
+  the device cannot be reached. It saves both through the settings route and
+  explains when an override remains effective. Device model discovery supplies
+  optional suggestions.
+- `lite/VERSION` contains `0.1.1`; `lite/__init__.py` reads it as the single
+  version source. `--version` and the existing Settings About row show it.
+- `README.md`: updated startup addresses, documented every config field and
+  override, masked inspection, and version rules: increment the final number
+  for every change; change the middle number only when Jason says so.
+- `tests/test_config.py` adds defaults, precedence, key permissions/masking,
+  busy-port output/exit, malformed config, version, persistence and default
+  model discovery tests. `tests/test_server.py` now checks config persistence
+  and that the environment still overrides a model saved through the route.
+
+Verification:
+
+- `python3 -m unittest`: **34 tests, 31 passed, 3 skipped**, exit 0. The three
+  existing live HTTP tests were skipped because this sandbox denies loopback
+  binding. Busy-port behavior was verified by injecting `EADDRINUSE` at server
+  construction; settings routes were exercised with the real in-memory HTTP
+  handler. No real port collision or device discovery is claimed verified.
+- `python3 -m compileall -q lite tests` passed. The suite parsed every console
+  JavaScript file with Node; the final settings change also passed `node --check`.
+  `git diff --check` passed. No external linter/typechecker is configured and
+  no dependency was added.
+- `python3 -m lite --version` printed `0.1.1`.
+- Echo selfcheck (`TIINY_MODEL=echo python3 -m lite --selfcheck --data-dir
+  data/selfcheck-1b`) passed: RSS 29.66 MB, initial door 21,574 bytes,
+  fresh-process initialization 58.43 ms, first token 1.07 ms, turn 39.94 ms.
+
+Remaining limits: live HTTP/device and visual behavior remain unverified here.
+Legacy base/model entries in `keys.json` are no longer configuration sources;
+use Settings > Model to save them in config. Existing `settings.json` botName
+is superseded by config's name. The requested checkpoint could not be committed:
+`git add` failed with `Unable to create .../.git/index.lock: Operation not
+permitted`. No permission bypass was attempted; all Step 1b changes remain
+uncommitted. Intended Lore intent line: `Keep Lite configuration persistent and
+its console separate from the full product relay`.

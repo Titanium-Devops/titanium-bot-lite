@@ -1,0 +1,123 @@
+"""CLI and persistence contracts without sockets or a browser."""
+import contextlib
+import errno
+import io
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from lite import __version__
+from lite.server import App, DEFAULTS, Device, Refusal, load_config, main
+from tests.test_server import wire
+
+
+class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        env = patch.dict(os.environ, {'ONELANE_DIR': str(self.root / '.onelane')}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+
+    def cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with patch('sys.argv', ['lite', '--data-dir', str(self.root), *args]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                main()
+                code = 0
+            except SystemExit as exit:
+                code = exit.code
+        return code, out.getvalue(), err.getvalue()
+
+    def test_defaults_complete_config_and_private_key(self):
+        self.assertEqual(load_config(self.root), DEFAULTS | {'key': ''})
+        self.assertEqual(json.loads((self.root / 'config.json').read_text()), DEFAULTS)
+        self.assertEqual((self.root / 'keys.json').stat().st_mode & 0o777, 0o600)
+
+    def test_precedence_all_layers(self):
+        load_config(self.root)
+        saved = dict(base='http://config/v1', model='config-model', port=8001, bind='127.0.0.1', name='Ada')
+        (self.root / 'config.json').write_text(json.dumps(saved))
+        (self.root / 'keys.json').write_text(json.dumps({'apiKey': 'stored-secret'}))
+        self.assertEqual(load_config(self.root), saved | {'key': 'stored-secret'})
+        env = dict(TIINY_BASE='http://env/v1', TIINY_MODEL='env-model', TIINY_PORT='8002', TIINY_KEY='env-secret')
+        with patch.dict(os.environ, env):
+            effective = load_config(self.root)
+            self.assertEqual(effective, saved | dict(base='http://env/v1', model='env-model', port=8002, key='env-secret'))
+            code, out, err = self.cli('--base', 'http://cli/v1', '--model', 'cli-model', '--port', '8003', '--bind', 'localhost', '--name', 'CLI', '--key', 'cli-secret', '--show-config')
+            self.assertEqual((code, err), (0, ''))
+            self.assertEqual(json.loads(out), dict(base='http://cli/v1', model='cli-model', port=8003, bind='localhost', name='CLI', key='********'))
+            self.assertNotIn('secret', out)
+        self.assertEqual(json.loads((self.root / 'config.json').read_text()), saved)
+
+    def test_show_config_masks_stored_and_environment_key_without_starting_app(self):
+        load_config(self.root)
+        (self.root / 'keys.json').write_text('{"apiKey":"stored-secret"}')
+        for env in ({}, {'TIINY_KEY': 'environment-secret'}):
+            with patch.dict(os.environ, env), patch('lite.server.App') as app:
+                code, out, err = self.cli('--show-config')
+                app.assert_not_called()
+            self.assertEqual((code, err), (0, ''))
+            self.assertEqual(json.loads(out)['key'], '********')
+            self.assertNotIn('secret', out)
+            self.assertNotIn('secret', (self.root / 'config.json').read_text())
+
+    def test_busy_port_one_sentence_and_exit_one(self):
+        with patch('lite.server.Server', side_effect=OSError(errno.EADDRINUSE, 'Address in use')):
+            code, out, err = self.cli('--port', '8123', '--model', 'echo')
+        self.assertEqual(code, 1)
+        self.assertEqual(out, '')
+        self.assertEqual(err, f'Port 8123 is busy; choose another with --port or in {self.root / "config.json"}.\n')
+        self.assertNotIn('Traceback', err)
+
+    def test_malformed_configuration_exits_without_traceback(self):
+        load_config(self.root)
+        for filename, contents in (("keys.json", "[]"), ("config.json", "not json")):
+            (self.root / filename).write_text(contents)
+            code, out, err = self.cli("--show-config")
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+            self.assertNotIn("Traceback", err)
+            self.assertIn("configuration", err)
+            (self.root / filename).write_text("{}")
+
+    def test_version_needs_no_data_or_server(self):
+        code, out, err = self.cli('--version')
+        self.assertEqual((code, out, err), (0, '0.1.1\n', ''))
+        self.assertFalse((self.root / 'config.json').exists())
+        self.assertEqual(__version__, '0.1.1')
+
+    def test_settings_model_and_name_survive_restart(self):
+        app = App(self.root)
+        self.addCleanup(app.close)
+        status, _, result = wire(app, 'PATCH', '/api/settings', {'base': 'http://new/v1', 'model': 'chosen', 'botName': 'Ada'})
+        self.assertEqual(status, 200)
+        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.1'))
+        app.close()
+        restarted = App(self.root)
+        self.addCleanup(restarted.close)
+        self.assertEqual((restarted.device.base, restarted.device.model, restarted.settings['botName']), ('http://new/v1', 'chosen', 'Ada'))
+        self.assertEqual(json.loads((self.root / 'keys.json').read_text()), {})
+        old = (self.root / 'config.json').read_text()
+        self.assertEqual(wire(restarted, 'PATCH', '/api/settings', {'base': 'http://user:secret@host/v1'})[0], 400)
+        self.assertEqual((self.root / 'config.json').read_text(), old)
+
+    def test_default_resolves_first_chat_model_and_explicit_skips_discovery(self):
+        device = Device(self.root, DEFAULTS['base'], '', 'default')
+        with patch.object(device, 'request', side_effect=[{'data': [{'id': 'embed-a'}, {'id': 'chat-a'}, {'id': 'chat-b'}]}, {}]) as request:
+            device.chat([], lambda token: None)
+            self.assertEqual(request.call_args_list[0].args, ('/models',))
+            self.assertEqual(request.call_args_list[1].args[1]['model'], 'chat-a')
+        self.assertEqual(device.model, 'default')
+        with patch.object(device, 'request', return_value={'data': []}):
+            with self.assertRaises(Refusal):
+                device.chat([], lambda token: None)
+        device.model = 'explicit'
+        with patch.object(device, 'request', return_value={}) as request:
+            device.chat([], lambda token: None)
+            request.assert_called_once()
+            self.assertEqual(request.call_args.args[1]['model'], 'explicit')

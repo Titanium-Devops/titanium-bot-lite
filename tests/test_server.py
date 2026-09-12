@@ -135,8 +135,8 @@ class RouteTests(AppCase):
             models = self.request('GET', '/api/models')
         self.assertEqual(models['device'], [{'id': 'echo', 'name': 'echo', 'running': True}])
         self.assertEqual(models['lan'], [])
-        self.assertEqual(self.request('POST', '/api/model', {'action': 'use', 'id': 'another'})['live']['model'], 'another')
-        self.assertEqual(json.loads((self.app.root / 'keys.json').read_text())['model'], 'another')
+        self.assertEqual(self.request('POST', '/api/model', {'action': 'use', 'id': 'another'})['live']['model'], 'echo')
+        self.assertEqual(json.loads((self.app.root / 'config.json').read_text())['model'], 'another')
         for action in ('start', 'stop'):
             self.request('POST', '/api/model', {'action': action, 'id': 'echo'}, 501)
         self.request('POST', '/api/model', {'action': 'use', 'model': 'echo', 'baseUrl': 'http://elsewhere', 'apiKey': 'test-private-key'}, 501)

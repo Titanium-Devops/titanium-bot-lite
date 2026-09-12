@@ -26,13 +26,15 @@
     return group('about','Titanium Bot',`<a class="lite-attribution" href="https://titanium.bot" target="_blank" rel="noopener"><img src="brand/ti-mark.svg" alt="Ti">Brought to you by Titanium Bot</a>`+row('Version','The version running on this device.',`<span>${esc(facts.version)}</span>`)+(facts.budget?row('Measured budget','Memory, first page and start time.',`<span>${esc(facts.budget.rssMb)} MB · ${esc(facts.budget.firstPaintKb)} KB · ${esc(facts.budget.coldStartMs)} ms</span>`):''));
   }
   async function model(host,ticket){
-    host.innerHTML=group('model','Model','<p>Reading the available models…</p>');
+    host.innerHTML=group('model','Your device',row('API address','The OpenAI address shown in TiinyOS.',input('base',facts.base,'API address'))+row('Model','Use default for the first chat model your device lists.',`<input type="text" data-setting="model" aria-label="Model" value="${esc(facts.model)}" list="device-models"><datalist id="device-models"><option value="default">First chat model</option></datalist>`)+row('Model controls','Start and stop models in your device settings.','<span>On your device</span>'))
+      +group('preferences','Your preferences',row('Ask me before…','Things Titan should ask you about first.',input('askBefore',facts.askBefore,'Ask me before',true)))
+      +group('connections','Other computers','<p>Connecting another computer or a cloud model is not available yet.</p>');
     try {
       const models=await adapter().getModels();if(ticket!==generation)return;
-      host.innerHTML=group('model','Your device',row('Model','The model answering this conversation.',`<select data-model aria-label="Model">${models.device.map(m=>`<option value="${esc(m.id)}"${models.live.model===m.id?' selected':''}>${esc(m.name)}</option>`).join('')}</select>`)+row('Model controls','Start and stop models in your device settings.','<span>On your device</span>'))
-        +group('preferences','Your preferences',row('Ask me before…','Things Titan should ask you about first.',input('askBefore',facts.askBefore,'Ask me before',true)))
-        +group('connections','Other computers','<p>Connecting another computer or a cloud model is not available yet.</p>');
-    }catch(error){if(ticket===generation)host.textContent=error.message;}
+      host.querySelector('#device-models').insertAdjacentHTML('beforeend',models.device.filter(m=>m.id!=='default').map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join(''));
+    }catch(error){
+      if(ticket===generation){const status=document.querySelector('[data-settings-status]');if(status)status.textContent='Device models are unavailable. You can still edit the API address and model.';}
+    }
   }
   async function open(id='general'){
     const ticket=++generation;
@@ -58,16 +60,14 @@
   }
   document.addEventListener('click',event=>{const button=event.target.closest?.('[data-settings-nav]');if(button)open(button.dataset.settingsNav);});
   document.addEventListener('change',async event=>{
-    const field=event.target;if(!field.matches?.('[data-setting],[data-model]'))return;
+    const field=event.target;if(!field.matches?.('[data-setting]'))return;
     const status=document.querySelector('[data-settings-status]');field.disabled=true;
     try{
-      if(field.hasAttribute('data-model'))await adapter().setModel({action:'use',id:field.value});
-      else {
-        const name=field.dataset.setting;
-        facts=await adapter().saveSettings({[name]:field.value});
-        if(name==='theme'){document.documentElement.dataset.theme=facts.theme;try{localStorage.setItem('machineRoom.theme',facts.theme);}catch{}}
-      }
-      if(status)status.textContent='Saved';
+      const name=field.dataset.setting;
+      const changes=name==='base'||name==='model'?{base:document.querySelector('[data-setting="base"]').value,model:document.querySelector('[data-setting="model"]').value}:{[name]:field.value};
+      facts=await adapter().saveSettings(changes);
+      if(name==='theme'){document.documentElement.dataset.theme=facts.theme;try{localStorage.setItem('machineRoom.theme',facts.theme);}catch{}}
+      if(status)status.textContent=Object.keys(changes).some(key=>(key==='base'||key==='model')&&changes[key]!==facts[key])?'Saved; command-line or environment settings still override this value.':'Saved';
     }catch(error){if(status)status.textContent=error.message;else ui().showToast(error.message);}
     finally{field.disabled=false;}
   });

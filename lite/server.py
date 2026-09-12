@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
+import sys
 import hashlib
 import json
 import mimetypes
@@ -69,6 +71,47 @@ def atomic_write(path: Path, content: str, mode=0o644):
         temporary.unlink(missing_ok=True)
 
 
+DEFAULTS = dict(base="http://openai.api.tiiny/v1", model="default", port=7788,
+                bind="0.0.0.0", name="Titan")
+
+
+def load_config(root, overrides=None):
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "config.json"
+    if not path.exists():
+        atomic_write(path, json.dumps(DEFAULTS, indent=2) + "\n")
+    saved = json.loads(path.read_text())
+    if not isinstance(saved, dict) or set(saved) - DEFAULTS.keys():
+        raise Refusal("Use only base, model, port, bind and name in config.json; keep the key in keys.json.")
+    values = DEFAULTS | saved
+    keys = root / "keys.json"
+    if not keys.exists():
+        atomic_write(keys, "{}\n", 0o600)
+    keys.chmod(0o600)
+    stored = json.loads(keys.read_text())
+    if not isinstance(stored, dict):
+        raise Refusal("Use an object with an apiKey field in keys.json.")
+    values["key"] = stored.get("apiKey", "")
+    for field in ("base", "model", "key", "port"):
+        if "TIINY_" + field.upper() in os.environ:
+            values[field] = os.environ["TIINY_" + field.upper()]
+    values.update({k: v for k, v in (overrides or {}).items() if v is not None})
+    try:
+        values["port"] = int(values["port"])
+        if not 1 <= values["port"] <= 65535:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise Refusal("Choose a port from 1 to 65535 with --port or config.json.") from None
+    for field in ("base", "model", "bind", "name", "key"):
+        if not isinstance(values[field], str) or (field != "key" and not values[field].strip()):
+            raise Refusal("Config values must be text, with a numeric port.")
+    parsed = urllib.parse.urlsplit(values["base"])
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise Refusal("Use a plain HTTP or HTTPS model address without embedded credentials.")
+    return values
+
+
 def read_persona(root):
     return (Path(root) / "persona.md").read_text(encoding="utf-8")
 
@@ -117,7 +160,7 @@ def read_skills(root):
     return result
 
 
-def build_prompt(root, text=""):
+def build_prompt(root, text="", name=None):
     settings_file = Path(root) / "settings.json"
     preferences = json.loads(settings_file.read_text()) if settings_file.exists() else {}
     memories = read_memories(root)
@@ -133,7 +176,7 @@ def build_prompt(root, text=""):
     skills = read_skills(root)
     catalog = "\n".join(f'{s["name"]}: {s["description"]} ({s["path"]})' for s in skills if s["enabled"])
     return "\n\n".join((BASE_PROMPT, read_persona(root),
-                          "The owner calls you " + preferences.get("botName", "Titan") + ".",
+                          "The owner calls you " + (name or preferences.get("botName", "Titan")) + ".",
                           "Preferred reply language: " + preferences.get("language", "en") + ".",
                           "Ask the owner before: " + preferences.get("askBefore", ""),
                           f"Local time: {datetime.now().astimezone():%Y-%m-%d %H:%M %Z}.",
@@ -232,16 +275,25 @@ class Device:
                 on_token(answer[index:index + 8])
                 time.sleep(0.01)
             return {"total_tokens": 0}  # No model tokens were spent.
-        return self.request("/chat/completions", dict(model=self.model, messages=messages,
+        model = self.model
+        if model == "default":
+            models = self.request("/models").get("data", [])
+            model = next((m["id"] for m in models if isinstance(m.get("id"), str)
+                          and m["id"] and m.get("type", "chat") in ("chat", "text", "llm")
+                          and "embed" not in m["id"].lower()), None)
+            if model is None:
+                raise Refusal("The device lists no chat models. Start a chat model on the device.", 503)
+        return self.request("/chat/completions", dict(model=model, messages=messages,
                             stream=True, stream_options={"include_usage": True}, max_tokens=1000,
                             chat_template_kwargs={"enable_thinking": False}), on_token)
 
 
 class App:
-    def __init__(self, data_dir=None):
+    def __init__(self, data_dir=None, overrides=None):
         self.started = time.monotonic()
         self.root = Path(data_dir or os.getenv("TIINY_DATA_DIR", "./data")).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.overrides = overrides or {}
+        self.config = load_config(self.root, self.overrides)
         for name in ("memory/log", "skills", "routines", "files", "transcripts", "handbook"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
         for name, content in (("persona.md", PERSONA), ("keys.json", "{}"),
@@ -256,10 +308,8 @@ class App:
         if (self.root / "settings.json").exists():
             saved = json.loads((self.root / "settings.json").read_text())
             self.settings.update({k: v for k, v in saved.items() if k in self.settings})
-        stored = json.loads((self.root / "keys.json").read_text())
-        self.device = Device(self.root, os.getenv("TIINY_BASE") or stored.get("base") or "http://openai.api.tiiny/v1",
-                             os.getenv("TIINY_KEY") or stored.get("apiKey", ""),
-                             os.getenv("TIINY_MODEL") or stored.get("model") or "default")
+        self.settings["botName"] = self.config["name"]
+        self.device = Device(self.root, self.config["base"], self.config["key"], self.config["model"])
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.revision = 0
@@ -309,11 +359,11 @@ class App:
                     coldStartMs=round(self.cold_start_ms, 2))
 
     def get_settings(self):
-        return dict(copy.deepcopy(self.settings), persona=read_persona(self.root), version=__version__,
+        return dict(copy.deepcopy(self.settings), base=self.device.base, model=self.device.model, persona=read_persona(self.root), version=__version__,
                     budget=self.budget(), usage=dict(tokens=self.tokens, minutes=round(self.seconds / 60, 3)))
 
     def patch_settings(self, body):
-        allowed = set(self.settings) | {"persona"}
+        allowed = set(self.settings) | {"persona", "base", "model"}
         if set(body) - allowed:
             raise Refusal("One of these settings cannot be changed.")
         for key, value in body.items():
@@ -338,7 +388,14 @@ class App:
         if body.get("theme", "dusk") not in ("dusk", "mist", "ink", "light", "dark", "system"):
             raise Refusal("Choose a supported theme.")
         with self.lock:
+            changes = {k: body[k] for k in ("base", "model") if k in body}
+            if "botName" in body:
+                changes["name"] = body["botName"]
+            if changes:
+                self.save_config(changes)
             for key, value in body.items():
+                if key in ("base", "model", "botName"):
+                    continue
                 if key == "persona":
                     atomic_write(self.root / "persona.md", value)
                 elif key == "voice":
@@ -348,6 +405,22 @@ class App:
             atomic_write(self.root / "settings.json", json.dumps(self.settings))
             self.poke()
             return self.get_settings()
+
+    def save_config(self, changes):
+        with self.lock:
+            if self.active or not self.jobs.empty():
+                raise Refusal("Wait for Titan to finish before changing the configuration.", 409)
+            path = self.root / "config.json"
+            saved = DEFAULTS | json.loads(path.read_text()) | changes
+            if any(not isinstance(v, str) or not v.strip() for k, v in changes.items()):
+                raise Refusal("Enter a nonempty address, model and name.")
+            # Validate the saved address even when an environment override is active.
+            Device(self.root, saved["base"], self.device.key, saved["model"])
+            atomic_write(path, json.dumps(saved, indent=2) + "\n")
+            self.config = load_config(self.root, self.overrides)
+            self.device = Device(self.root, self.config["base"], self.config["key"], self.config["model"])
+            self.settings["botName"] = self.config["name"]
+            self.poke()
 
     def library(self):
         skills = [{k: v for k, v in s.items() if k != "body"} for s in read_skills(self.root)]
@@ -463,7 +536,7 @@ class App:
                     reply["text"] += chunk
                     self.poke()
             try:
-                messages = [dict(role="system", content=build_prompt(self.root, user["text"]))]
+                messages = [dict(role="system", content=build_prompt(self.root, user["text"], self.settings["botName"]))]
                 messages += [dict(role="user" if m["authorId"] == "you" else "assistant", content=m["text"])
                              for m in history]
                 usage = self.device.chat(messages, token)
@@ -565,7 +638,7 @@ def selfcheck(app):
     error = None
     try:
         prompt = "Say hello in five words"
-        app.device.chat([{"role": "system", "content": build_prompt(app.root, prompt)},
+        app.device.chat([{"role": "system", "content": build_prompt(app.root, prompt, app.settings["botName"])},
                          {"role": "user", "content": prompt}], token)
     except Exception as failure:
         error = str(failure) if isinstance(failure, Refusal) else "The configured model check failed."
@@ -742,14 +815,7 @@ class Handler(BaseHTTPRequestHandler):
                 ident = body.get("id")
                 if not isinstance(ident, str) or not ident or len(ident) > 200:
                     raise Refusal("Choose a model first.")
-                with app.lock:
-                    if app.active or not app.jobs.empty():
-                        raise Refusal("Wait for Titan to finish before switching models.", 409)
-                    stored = json.loads((app.root / "keys.json").read_text())
-                    stored["model"] = ident
-                    atomic_write(app.root / "keys.json", json.dumps(stored), 0o600)
-                    app.device.model = ident
-                    app.poke()
+                app.save_config({"model": ident})
                 return self.respond(dict(live=app.live()))
         if verb == "GET" and path == "/api/file":
             requested = params.get("path", [""])[0]
@@ -779,13 +845,27 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description="Titanium Bot Lite")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=7777)
+    parser.add_argument("--bind", "--host", dest="bind")
+    parser.add_argument("--port", type=int)
+    for field in ("base", "model", "key", "name"):
+        parser.add_argument("--" + field)
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("--show-config", action="store_true")
     parser.add_argument("--data-dir")
     parser.add_argument("--selfcheck", action="store_true", help="Measure startup, memory, door bytes and one reply")
     parser.add_argument("--boot-probe", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    app = App(args.data_dir)
+    overrides = {k: getattr(args, k) for k in (*DEFAULTS, "key")}
+    root = Path(args.data_dir or os.getenv("TIINY_DATA_DIR", "./data")).resolve()
+    try:
+        config = load_config(root, overrides)
+    except (Refusal, ValueError, OSError):
+        print("Cannot read configuration; check config.json and your command-line settings.", file=sys.stderr)
+        raise SystemExit(1)
+    if args.show_config:
+        print(json.dumps(config | {"key": "********" if config["key"] else ""}, indent=2))
+        return
+    app = App(root, overrides)
     if args.boot_probe:
         print("ready", flush=True)
         app.close()
@@ -796,7 +876,15 @@ def main():
         finally:
             app.close()
         raise SystemExit(code)
-    server = Server((args.host, args.port), app)
+    try:
+        server = Server((config["bind"], config["port"]), app)
+    except OSError as error:
+        app.close()
+        if error.errno == errno.EADDRINUSE:
+            print(f"Port {config['port']} is busy; choose another with --port or in {root / 'config.json'}.", file=sys.stderr)
+        else:
+            print("Cannot bind the server; check --bind and --port or config.json.", file=sys.stderr)
+        raise SystemExit(1) from None
     print(f"Titanium Bot Lite is ready at http://localhost:{server.server_port}. Budget: {json.dumps(app.budget())}", flush=True)
     try:
         server.serve_forever()
