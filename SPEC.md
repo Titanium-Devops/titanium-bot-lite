@@ -15,14 +15,23 @@ Bot" with the Ti mark, linking to https://titanium.bot, on the door and in Setti
 Not multi-tenant. No accounts. No control plane. No Docker, no desktop, no box. No mail plane, no
 push, no code sandboxes, no marketplace, no team of bots. One owner, one Titan, one device.
 
-## Facts about the device (read 2026-09-11 at dev.tiiny.ai and tiiny.ai)
+## Facts about the device (readers 1 to 3, 2026-09-11; sources in docs/tiiny-platform.md)
 
-- TiinyOS runs open-source LLMs on the device's NPU and "AI agents with a single click".
-- OpenAI-compatible chat API on the device: base URL from the SDK, api key from
-  `device.get_api_key(master_password)`, device address like `fd80:7:7:7::1` (IPv6).
-- Model list, start, stop; embeddings; rerank; image generation. Python SDK: `pip install tiiny`.
-- Unknown: the packaging format Tinyverse accepts, CPU and RAM available to a third-party process,
-  whether on-device speech-to-text or text-to-speech is exposed. Reader 3 answers these.
+- Tiiny AI Pocket Lab: 80 GB LPDDR5X, 1 TB SSD, 12-core ARMv9.2, a ~190 TOPS NPU, 30 W TDP; runs
+  models up to 120B on the device. TiinyOS runs them and an Agent Store of existing open-source
+  agents installed as services. There is NO documented way to submit an app to that store and no
+  package format, so "Tinyverse" is not a delivery target.
+- The model API is OpenAI-compatible at http://<device-ip>:8800/v1 with a Bearer key from the
+  official CLI (`tiiny init`, `tiiny login`, `tiiny auth key`; the official SDK installs from a shell
+  script at files.tiinycdn.com, not pip). Chat completions, embeddings, images, speech-to-text
+  (POST /v1/audio/transcriptions) and text-to-speech (POST /v1/audio/speech) are documented. Model
+  list, load, unload and NPU status are documented; model id `default` is whatever is loaded.
+- Tool calling is UNDOCUMENTED on every surface. Skills and routines need a function-calling loop,
+  so step 0 below probes it on Jason's unit before anything else is planned around it.
+- No realtime speech socket: voice is push-to-talk or chunked turns, not live duplex. No cloud key
+  is needed for a basic voice loop.
+- PyPI `tiiny-sdk` 0.2.0 is an unrelated Hermes-shaped agent runtime whose `tiiny` script collides
+  with the official CLI. Nothing of ours is ever named `tiiny`; the package is `titanium-bot-lite`.
 
 ## Shape
 
@@ -50,16 +59,51 @@ The Ti mark (`brand/ti-mark.svg`), Midnight #090D14, Signal Cyan #00C8F0, Titan 
 "Brought to you by Titanium Bot" on the sign-in door, the About row in Settings, and the README.
 Copy for a person is plain words; no em dashes.
 
-## Delivery order, each step runnable
+## What the readers found, folded in
 
-1. Console plus an echo model.
-2. The Tiiny model behind Settings, with list, start and stop.
-3. Memories and skills.
-4. Routines.
-5. Voice.
-6. The Tinyverse package.
+### Packaging: beside the device, not on it (docs/tiiny-platform.md)
+One pip-installable Python 3.11+ package, `titanium-bot-lite`, run on the Mac or any LAN box the
+Tiiny is reachable from; `titanium-bot-lite start` serves the console on the LAN and talks to the
+device at <device-ip>:8800. Optional second form: register Lite as a custom MCP connector in
+TiinyOS so their own chat can reach Titan's memory and skills.
 
-## From the readers
+### The console (docs/console-pieces.md)
+Ports as is: the phone layout (insets, 690 px blocks, drawers, jump-newest, 44 px targets), the
+composer, the transcript renderer (code chips, tool receipts, the Spoken chip), the whole Titan
+mascot kit, the boot cover, the background picker (three plates, not seventeen), files-viewer.js,
+voice.js including the call screen. The job is splitting app.js: about 3,500 of its 8,325 lines
+port, and a new lite-adapter.js of about 300 lines replaces gateway-adapter.js (5,326 lines) and
+adapter.js. settings.js keeps its shell and registry with four sections plus About, Computer
+becomes Model. Drops: marketplace, screen tile, cloud browser, code tasks, push, account menu, bot
+setup, both old adapters (11,600 lines, 1.7 MB). The server contract is 12 routes plus one
+WebSocket for voice, listed in the doc against the delivery steps. The SSE stream is one poke
+("re-read", debounced 900 ms). The page never talks to a voice vendor itself, so on-device speech
+plugs in server-side without touching voice.js.
 
-See `docs/console-pieces.md` (reader 1), `docs/agent-pieces.md` (reader 2) and
-`docs/tiiny-platform.md` (reader 3). Their findings are folded back into this file when they land.
+### The agent (docs/agent-pieces.md)
+Memory: one fact per line `- (YYYY-MM-DD) <fact>` in memory/profile.md and memory/log/YYYY-MM.md,
+500 characters, refuse over-long facts rather than slice. Skills: one folder, one SKILL.md with
+name and description frontmatter; the name in the file is the name it is filed under. Routines: a
+real five-field cron or nothing, created disabled. Persona: a seeded persona.md the owner edits,
+keeping five habits (precedence to what is on the device, first-time setup asks its first
+question in the same message, the handbook pointer, never ask for a credential, backticks on
+identifiers) and dropping every fleet fact. Tools, five, as OpenAI schemas: Read, Write,
+fetch_url, update_state (memory, routine, profile), run_skill. Packs: handbook-never-ask,
+handbook-plain-words and onboarding ship after a trim; handbook-what-i-can-do is rewritten as
+this device's map; the six packs that need mail, a browser, a box or a crew carry one line,
+"that is part of the full Titanium Bot, not this device". The skill catalog is in the prompt from
+day one (the product does not do this yet; KB-1f).
+
+## Delivery order, revised
+
+0. Probe on Jason's unit: does chat completions honour `tools`? Does streaming work on the
+   OpenAI route? Does /v1/audio/speech return audio for a short sentence? Ten minutes with curl,
+   written into docs/tiiny-platform.md. Everything after depends on the first answer.
+1. Console split plus lite-adapter.js against an echo server; the door says "Brought to you by
+   Titanium Bot".
+2. Settings, Model section: list, load, unload on the device; LAN endpoint and cloud key fallbacks.
+3. Memory, persona, skills with the catalog in the prompt; the five tools.
+4. Routines on cron.
+5. Voice: push-to-talk and the call screen through the device's ASR and TTS.
+6. `pip install titanium-bot-lite`, a README a non-technical owner follows in ten minutes, and
+   the optional MCP connector registration.
