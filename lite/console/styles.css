@@ -3372,3 +3372,6 @@ body[data-capability-menu] .window-bar {
 @media (max-width:690px) {
   .window-identity .window-lockup { display:block; height:16px; }
 }
+
+/* The transcript uses the same coloured Titan kit as the header. */
+.message-avatar.titan-sprite { object-fit: contain; background: transparent; border: 0; border-radius: 0; }

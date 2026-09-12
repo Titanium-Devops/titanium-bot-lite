@@ -4,7 +4,7 @@ A small, local assistant for the Tiiny AI Pocket Lab, brought to you by [Titaniu
 Built for [Tiiny](https://tiiny.ai).
 
 Titan talks to the model on your pocket device. This first version runs on a Mac or Linux computer
-beside it and gives you chat, saved memories, an editable persona and a folder of skills.
+beside it and gives you chat, file tools, saved memories, an editable persona and a folder of skills.
 Model start and stop, scheduled routines and speech are coming in later steps.
 
 Made by Titanium Computing. The full product, with a team of bots, mail, a browser and a computer of
@@ -60,8 +60,19 @@ when running Lite from another computer. Your phone connects to the computer run
 Settings lets you change Titan's name, appearance and persona. Your conversation and preferences
 stay in `data/` beside this README. Memories live in `data/memory/`; each fact can have up to 500
 characters. Skills are folders under `data/skills/`, each with a `SKILL.md` containing a name and
-description at the top. Select a skill in the console to run its instructions as a chat prompt.
-Uploaded files can be viewed; Titan does not yet read their contents automatically.
+description at the top. Four starter skills explain Titan’s abilities, plain words, private
+information and first-time setup. Titan sees the catalog each turn and can open a skill when needed.
+
+Ask Titan to read or write a text file in `data/files/`, read a public text page, or remember a
+fact. Tool receipts show what happened. File tools cannot access anything outside `files/`;
+file and page text is limited to 200 KB. URL fetching has a 10-second timeout and refuses private
+addresses and redirects. Uploaded text files are available to the Read tool; pictures and PDFs
+are stored and viewable but are not decoded for the model yet.
+
+Profile facts are kept in every prompt along with the last 40 dated log facts. A fact over 500
+characters is refused rather than shortened. First-time setup begins with “What should I call
+you?”; say “run first-time setup” to repeat the interview. Change the persona in Settings > General.
+Routines can be saved as disabled drafts with a five-field clock schedule; they do not run yet.
 
 On first run, the server creates `data/config.json` with every field below. Settings > Model
 saves the API address (`base`) and model there, including when the device is unavailable.
@@ -94,7 +105,7 @@ is busy, choose another with `python3 -m lite --port 7789` or change `port` in `
 
 ## Version numbers
 
-The current version is `0.1.3`, stored in `lite/VERSION`, shown in Settings > About and printed
+The current version is `0.1.5`, stored in `lite/VERSION`, shown in Settings > About and printed
 by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
 `0.1.3`. The middle number changes only when Jason says so.
 
@@ -124,4 +135,4 @@ If another local app also uses the device, set `ONELANE_DIR` to the same shared 
 both apps before starting them. Lite otherwise keeps its lock inside its data folder.
 
 See `SPEC.md` for the plan, `docs/console-pieces.md` for the route contract, and
-`docs/STEP-1-REPORT.md` for delivery evidence and current limits.
+`docs/REPORT.md` for delivery evidence and current limits.

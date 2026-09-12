@@ -60,6 +60,9 @@ class AppCase(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         self.app = App(self.temp.name)
+        # Most route tests begin after the separately tested first-run greeting.
+        self.app.messages.clear()
+        self.app.save_messages()
         self.addCleanup(self.app.close)
 
     def request(self, method, path, body=None, status=200, headers=None):

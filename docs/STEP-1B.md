@@ -16,4 +16,4 @@
    About row shows it. Write the rule into README.
 4. Tests for the precedence order, the busy-port sentence and the masked --show-config.
    `python3 -m unittest` must stay green. Commit as you go; finish by appending a "Step 1b"
-   section to docs/STEP-1-REPORT.md.
+   section to docs/REPORT.md.

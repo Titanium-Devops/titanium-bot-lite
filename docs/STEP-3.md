@@ -31,6 +31,5 @@ can only chat, read files and edit his persona. This step gives him hands.
 6. Tests with unittest: the loop against a fake device that returns a tool call then a final
    answer; the Read and Write sandbox refusing a path outside files/; the memory cap; the catalog
    in the prompt; run_skill. `python3 -m unittest` green. Bump lite/VERSION by one on the last
-   number. Append a "Step 3" section to docs/STEP-1-REPORT.md (rename the file to
-   docs/REPORT.md and update references). Commit is not possible from your sandbox; leave the tree
+   number. Append a "Step 3" section to docs/REPORT.md (the consolidated report, renamed from the Step 1 report). Commit is not possible from your sandbox; leave the tree
    with only your changes.

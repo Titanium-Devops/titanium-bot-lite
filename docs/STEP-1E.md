@@ -8,6 +8,6 @@ shows on every plate the picker offers. The door gets the same watermark at 24 p
 opacity 0.08, behind the headline. Add one test that the watermark element exists once on the
 console page and once on the door with the expected class and inline sizes. Do NOT change
 anything else about the plates. Bump lite/VERSION by one on the last number. `python3 -m unittest`
-green. Append a "Step 1e" section to docs/STEP-1-REPORT.md with the computed opacity and the
+green. Append a "Step 1e" section to docs/REPORT.md with the computed opacity and the
 bounding box you expect at 1280x800 and 390x844 (from the CSS arithmetic; rendered measurement
 is done by the orchestrator afterwards).

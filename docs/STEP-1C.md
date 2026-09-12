@@ -8,4 +8,4 @@ other server. Fix: before binding, try a TCP connect to 127.0.0.1:<port> and to 
 SO_REUSEADDR off for the check. Add a test that starts a throwaway listener on 127.0.0.1 on a spare
 port and asserts the refusal sentence and exit code. `python3 -m unittest` stays green. Commit is
 not possible from your sandbox; leave the tree clean apart from your change and append a "Step 1c"
-line to docs/STEP-1-REPORT.md.
+line to docs/REPORT.md.

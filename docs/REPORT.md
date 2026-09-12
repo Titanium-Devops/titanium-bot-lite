@@ -402,3 +402,93 @@ and `git diff --check` passed; the suite includes JavaScript syntax checks.
 No separate lint/typecheck tools are configured. No browser or GUI was launched.
 Rendered measurement and visual comparison remain for the orchestrator, as
 requested; these bounds and opacity values are source-based calculations.
+
+## Step 3
+
+Date: 2026-09-11. Implemented in the requested order: tool loop, memory,
+skills, persona, console fixes, then tests and delivery. Version **0.1.5**.
+This section supersedes the earlier report's statements that automatic tools
+and seeded skills are unavailable. No browser or GUI was launched, no device
+key was printed, no dependency was added, and no commit was attempted. The
+starting tracked tree was clean; only this step's changes remain uncommitted.
+
+Changed files and behavior:
+
+- `lite/server.py`, `lite/tools.json`, `lite/agent_tools.py`: ordinary turns
+  send the five OpenAI function schemas, assemble streamed tool-call fragments,
+  execute each call and send its result back to the model. The loop permits six
+  tool rounds, then requests a final answer with tools disabled. Final text is
+  streamed through the existing transcript updates. Receipts use the console's
+  existing `system`, `text`, `detail` shape, with tool-call IDs; refusals are
+  visible both to the model and in the transcript. Thinking starts off; two
+  empty replies trigger one retry with thinking enabled. Error 150004 and
+  HTTP 502/503/504 retain the existing lane and backoff, without replaying text
+  already emitted.
+- Read and Write accept only paths inside `files/`, reject traversal and
+  symlinks, and use the existing atomic writer. Uploaded file paths reach the
+  model so it can read uploaded text. Public URL retrieval has a 10-second
+  timeout and 200,000-byte body cap, accepts text only, refuses redirects and
+  compressed responses, rejects non-public addresses, and connects directly
+  to the checked IP without another DNS lookup or ambient proxy. Page contents
+  are marked as untrusted information.
+- Memory uses one normalized, dated fact per line. More than 500 characters
+  is refused with an explanation, never sliced. Default facts go to
+  `memory/log/YYYY-MM.md`; profile facts go to `memory/profile.md`. Every turn
+  includes all profile facts and the most recent 40 log facts. Duplicate
+  facts are not added again; forgetting uses the existing memory writer path.
+  Routine tools can save, update, pause and delete disabled drafts with valid
+  five-field cron schedules; resume and execution remain unavailable until
+  Step 4.
+- `lite/seeds/persona.md` and four `lite/seeds/*/SKILL.md` files seed new data
+  directories without overwriting owner edits. Never-ask, plain-words and
+  onboarding were trimmed from the original source seed files at the location
+  documented in `docs/agent-pieces.md`; those seeds were not present in this
+  checkout's `vendor/`. The capability handbook was rewritten for this device.
+  The persona copies the supplied block, including BEFORE, never-ask and the
+  first-question rule. The prompt clarifies the current local credential
+  configuration, since a masked Settings credential box is not yet built.
+  A first-run greeting immediately asks “What should I call you?” and is
+  persisted once; subsequent interview turns use the model and onboarding skill.
+  The greeting itself is locally seeded and does not require inference.
+- Skill catalogs include names, descriptions, paths and disabled status.
+  `run_skill` inserts an enabled skill's body into the conversation. The reader
+  supports folded descriptions, the documented field limits, and the 16,000
+  character inlining limit. Onboarding retains the five owner slots and saves
+  profile facts through `update_state`, without unavailable onboarding tools.
+- `lite/console/app.js`, `styles.css`, `settings.js`: the roster name and status
+  have separate layout classes; transcript avatars use the coloured Titan
+  mascot kit sprite. Settings > General retains the persona editor, and About
+  states which capabilities belong to full Titanium Bot.
+- `tests/test_agent_tools.py`, `tests/test_seeded_persona.py` add the Step 3
+  regressions. `tests/test_server.py` explicitly starts existing route fixtures
+  after the separately tested greeting. `tests/test_config.py` follows the
+  version bump in `lite/VERSION`. `README.md` describes the working tools and
+  current limits. This report was renamed to `docs/REPORT.md`, and references
+  in README and the Step 1/1B/1C/1D/1E/3 briefs were updated.
+
+Simplifications: retained one serialized worker and five tools, reused atomic
+writes, memory validation and existing receipt rendering, and added no shell,
+browser runtime, framework or third-party dependency.
+
+Verification:
+
+- `python3 -m unittest`: **56 tests, 52 passed, 4 skipped**, exit 0. The skips
+  are existing live-socket tests denied by the sandbox. Offline coverage includes
+  a fake device tool call followed by a final answer, fragmented streamed tool
+  calls, receipts, retry/backoff, thinking recovery, round limits, traversal and
+  symlink refusals, memory cap/refusal feedback, latest-40 recall, catalogs,
+  run_skill, seeding/restart/persona edits, routine drafts and fetch restrictions.
+- `python3 -m compileall -q lite tests` and `git diff --check` passed. The suite
+  checks all console JavaScript with Node. No separate linter or typechecker is
+  configured. `python3 -m lite --version` printed `0.1.5`.
+- CLI echo selfcheck passed: **29.88 MB** idle high-water RSS, **23,490 bytes**
+  of initial door resources, **58.16 ms** fresh-process initialization,
+  **1.98 ms** to first token and **43.66 ms** for the turn. All local budgets
+  passed; these are echo measurements, not device-inference measurements.
+
+Remaining verification limits: live device inference, public-network fetching
+and socket integration were not verified here. Console fixes were checked from
+source, without rendered visual inspection as instructed. Routines still do not
+run on a clock, voice is not connected, and pictures/PDFs are not decoded for the
+model; those remain later-step capabilities. Owner-edited existing personas and
+skills are preserved rather than overwritten on restart.

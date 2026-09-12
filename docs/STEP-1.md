@@ -38,5 +38,5 @@ Deliver, in this order, each runnable:
 
 Budget printed by --selfcheck and asserted by a test: idle RAM under 200 MB, first paint under
 250 KB, cold start under 5 s. Commit as you go with plain-prose messages, no attribution lines.
-When done, write docs/STEP-1-REPORT.md: what ported as is, what changed, what was dropped, the
+When done, write docs/REPORT.md: what ported as is, what changed, what was dropped, the
 selfcheck numbers, every deviation from this brief with its reason, and what step 2 needs.

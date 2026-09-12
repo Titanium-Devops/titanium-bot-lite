@@ -20,7 +20,7 @@
    run the selfcheck against the device (TIINY_KEY is in the environment) and put the numbers
    in the report.
 4. Bump lite/VERSION by one on the last number. `python3 -m unittest` green. Append a "Step 1d"
-   section to docs/STEP-1-REPORT.md. Commit is not possible from your sandbox; leave the tree
+   section to docs/REPORT.md. Commit is not possible from your sandbox; leave the tree
    with only your changes.
 
 5. THE BACKGROUND (added 20:59 by Jason): the console's default plate carries Tiiny's logo dead

@@ -23,6 +23,11 @@
   }
   function avatarMarkup(worker, className, title) {
     if (!worker) return "";
+    if (className === "message-avatar") {
+      const mood = window.TitanCrew?.moodFor(worker) || "calm";
+      const sprite = window.TitanCrew?.stillFor(0, mood) || "assets/characters/titan-calm.png";
+      return `<img class="message-avatar titan-sprite" src="${escapeHtml(sprite)}" alt="${escapeHtml(title || worker.name)}" />`;
+    }
     // AVATAR-1. Every face on this page comes through here, so this is the one place the Titan
     // crew has to be taught about: mascots.js answers with a live <titan-mascot> at the size the
     // static mark had, and answers with nothing when it should not draw one -- an agent whose own
@@ -408,7 +413,7 @@
   }
   function renderAll(older = false) {
     const worker=contextRecord();
-    document.getElementById('worker-stack').innerHTML=`<button class="worker-card is-selected" data-context-id="${escapeHtml(worker.id)}" data-status="${escapeHtml(worker.status)}">${avatarMarkup(worker,'worker-avatar')}<span class="worker-copy"><strong>${escapeHtml(worker.name)}</strong><small>${escapeHtml(worker.statusText)}</small></span></button>`;
+    document.getElementById('worker-stack').innerHTML=`<button class="worker-card is-selected" data-context-id="${escapeHtml(worker.id)}" data-status="${escapeHtml(worker.status)}">${avatarMarkup(worker,'worker-avatar')}<span class="worker-copy"><strong class="worker-name">${escapeHtml(worker.name)}</strong><small class="worker-status">${escapeHtml(worker.statusText)}</small></span></button>`;
     document.getElementById('room-title').textContent=worker.name;
     document.getElementById('room-subtitle').textContent=worker.statusText;
     document.getElementById('participant-cluster').innerHTML=avatarMarkup(worker,'participant-avatar');
