@@ -137,16 +137,16 @@ class ConfigTests(unittest.TestCase):
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
-        self.assertEqual((code, out, err), (0, '0.1.8\n', ''))
+        self.assertEqual((code, out, err), (0, '0.1.9\n', ''))
         self.assertFalse((self.root / 'config.json').exists())
-        self.assertEqual(__version__, '0.1.8')
+        self.assertEqual(__version__, '0.1.9')
 
     def test_settings_model_and_name_survive_restart(self):
         app = App(self.root)
         self.addCleanup(app.close)
         status, _, result = wire(app, 'PATCH', '/api/settings', {'base': 'http://new/v1', 'model': 'chosen', 'botName': 'Ada'})
         self.assertEqual(status, 200)
-        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.8'))
+        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.9'))
         app.close()
         restarted = App(self.root)
         self.addCleanup(restarted.close)

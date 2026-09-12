@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
+import signal
 import copy
 import errno
 import sys
@@ -1193,6 +1196,73 @@ def lite_is_running(port):
     return False
 
 
+def close_for_exit(app):
+    """Give cleanup one shared second; device I/O must not delay process exit.
+
+    All app and HTTP workers are daemon threads. Normal close still runs in full
+    when used by tests/embedded callers; only the exiting CLI bounds its wait.
+    An unfinished turn is recovered from the saved transcript on the next start.
+    """
+    app.stopping.set()
+    cleanup = threading.Thread(target=app.close, name="Titan shutdown", daemon=True)
+    cleanup.start()
+    cleanup.join(timeout=1.0)
+
+
+@contextmanager
+def running_pid(root):
+    # Keep the lock inode stable; deleting/recreating it could admit two owners.
+    fd = os.open(root / ".lite.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refusal("Titanium Tiiny Bot is already running with this data directory.") from None
+        pid = root / "lite.pid"
+        atomic_write(pid, str(os.getpid()) + "\n", 0o600)
+        try:
+            yield
+        finally:
+            pid.unlink(missing_ok=True)
+
+
+def stop_running(root):
+    pid_file = root / "lite.pid"
+    try:
+        fd = os.open(root / ".lite.lock", os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        print("Titanium Tiiny Bot is not running.")
+        return
+    with os.fdopen(fd, "r+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            try:
+                pid = int(pid_file.read_text())
+                if pid <= 1:
+                    raise ValueError()
+            except (OSError, ValueError):
+                raise Refusal("Cannot read the running process ID; try --stop again.") from None
+            try:
+                os.kill(pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(0.02)
+            else:
+                raise Refusal("The process has not stopped yet; try farm stop or inspect lite.pid.")
+            pid_file.unlink(missing_ok=True)
+            print("Stopped Titanium Tiiny Bot.")
+        else:
+            pid_file.unlink(missing_ok=True)
+            print("Titanium Tiiny Bot is not running.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Titanium Bot Lite")
     parser.add_argument("--bind", "--host", dest="bind")
@@ -1201,12 +1271,20 @@ def main():
         parser.add_argument("--" + field)
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--show-config", action="store_true")
+    parser.add_argument("--stop", action="store_true", help="Stop the process using this data directory")
     parser.add_argument("--data-dir")
     parser.add_argument("--selfcheck", action="store_true", help="Measure startup, memory, door bytes and one reply")
     parser.add_argument("--boot-probe", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     overrides = {k: getattr(args, k) for k in (*DEFAULTS, "key")}
     root = Path(args.data_dir or os.getenv("TIINY_DATA_DIR", "./data")).resolve()
+    if args.stop:
+        try:
+            stop_running(root)
+        except (Refusal, OSError) as error:
+            print(str(error) if isinstance(error, Refusal) else "Cannot stop the saved process.", file=sys.stderr)
+            raise SystemExit(1) from None
+        return
     try:
         config = load_config(root, overrides)
     except (Refusal, ValueError, OSError):
@@ -1215,16 +1293,34 @@ def main():
     if args.show_config:
         print(json.dumps(config | {"key": "********" if config["key"] else ""}, indent=2))
         return
+    # Shell background jobs can inherit SIG_IGN; --stop must still work.
+    previous_sigint = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        if args.boot_probe or args.selfcheck:
+            run_cli(args, root, overrides, config)
+            return
+        with running_pid(root):
+            run_cli(args, root, overrides, config)
+    except Refusal as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1) from None
+    except KeyboardInterrupt:
+        pass
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
+
+
+def run_cli(args, root, overrides, config):
     app = App(root, overrides)
     if args.boot_probe:
         print("ready", flush=True)
-        app.close()
+        close_for_exit(app)
         return
     if args.selfcheck:
         try:
             code = selfcheck(app)
         finally:
-            app.close()
+            close_for_exit(app)
         raise SystemExit(code)
     try:
         # A wildcard bind can succeed beside a loopback listener on macOS.
@@ -1237,7 +1333,7 @@ def main():
             raise OSError(errno.EADDRINUSE, "Loopback port is busy")
         server = Server((config["bind"], config["port"]), app)
     except OSError as error:
-        app.close()
+        close_for_exit(app)
         if error.errno == errno.EADDRINUSE:
             if lite_is_running(config["port"]):
                 print(f"Titanium Tiiny Bot is already running at http://localhost:{config['port']}")
@@ -1252,5 +1348,5 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        app.close()
+        close_for_exit(app)
         server.server_close()

@@ -109,7 +109,7 @@ is busy, choose another with `python3 -m lite --port 7789` or change `port` in `
 
 ## Version numbers
 
-The current version is `0.1.5`, stored in `lite/VERSION`, shown in Settings > About and printed
+The current version is `0.1.9`, stored in `lite/VERSION`, shown in Settings > About and printed
 by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
 `0.1.3`. The middle number changes only when Jason says so.
 
@@ -140,3 +140,41 @@ both apps before starting them. Lite otherwise keeps its lock inside its data fo
 
 See `SPEC.md` for the plan, `docs/console-pieces.md` for the route contract, and
 `docs/REPORT.md` for delivery evidence and current limits.
+
+## Install with farm
+
+Once the farm release is published:
+
+```sh
+python3 -m pip install tinyapp-farm
+farm device
+farm install titanium-tiiny-bot
+farm start titanium-tiiny-bot
+farm status
+farm stop titanium-tiiny-bot
+```
+
+Farm keeps your data in `~/tinyapps/titanium-tiiny-bot/data`, shares device settings
+through `TIINY_BASE` and `TIINY_KEY`, and uses one shared `ONELANE_DIR` for cooperating
+apps. `farm update titanium-tiiny-bot` preserves data and stops the previous process;
+start it again when ready. A manifest whose checksum is `pending` cannot install yet.
+
+For a direct checkout, stop the server using the same data directory:
+
+```sh
+python3 -m lite --stop
+# Or, for a farm launch:
+python3 -m lite --stop --data-dir ~/tinyapps/titanium-tiiny-bot/data
+```
+
+`lite.pid` is stored inside that data directory; a held `.lite.lock` distinguishes a
+running process from a stale PID. Ctrl-C and `--stop` allow one second for cleanup,
+then exit even while a device request is in progress. An unfinished turn is marked
+failed on the next start. Device-side inference may finish after the host exits, and
+best-effort voice-model release may not complete; check TiinyOS if a model stays loaded.
+
+Build the farm archive with `python3 scripts/release.py`. It writes
+`dist/titanium-tiiny-bot-0.1.9.tar.gz` and prints its SHA-256. Only `lite/`, `brand/`
+and this README are packaged, including `lite/VERSION`; developer dependencies,
+tests, caches and user data are excluded. The archive is reproducible for identical
+source bytes and executable permissions.
