@@ -7,6 +7,7 @@ import errno
 import sys
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -190,6 +191,17 @@ def build_prompt(root, text="", name=None):
                           "Available skills:\n" + catalog))
 
 
+class LogFormatter(logging.Formatter):
+    """Keep credentials out of diagnostics, including exception tracebacks."""
+    def __init__(self, key):
+        super().__init__("%(asctime)s %(levelname)s %(message)s")
+        self.key = key
+
+    def format(self, record):
+        text = super().format(record)
+        return text.replace(self.key, "[redacted]") if self.key else text
+
+
 class Device:
     """All requests hold the same device lane; retries never replay emitted text."""
     def __init__(self, root, base, key, model):
@@ -206,6 +218,10 @@ class Device:
         self.lane = OneLane(host=urllib.parse.urlsplit(base).hostname, key=key,
                             owner="Titanium Bot Lite", settle_s=0)
         self.busy_budget = 90.0
+        self.log = logging.Logger("lite", logging.DEBUG if os.getenv("LITE_DEBUG") == "1" else logging.WARNING)
+        handler = logging.FileHandler(root / "lite.log", encoding="utf-8", delay=True)
+        handler.setFormatter(LogFormatter(key))
+        self.log.addHandler(handler)
 
     def request(self, path, body=None, on_token=None):
         if self.model == "echo" and path == "/models":
@@ -215,15 +231,19 @@ class Device:
         emitted = False
         while True:
             try:
+                self.log.debug("lane waiting path=%s attempt=%d", path, attempt + 1)
                 with self.lane.hold(why="Titan answering" if body else "Reading available models", wait=90):
                     request = urllib.request.Request(
                         self.base + path, data=json.dumps(body).encode() if body is not None else None,
                         headers={"Authorization": "Bearer " + self.key, "Content-Type": "application/json"})
+                    self.log.debug("request sent path=%s attempt=%d", path, attempt + 1)
                     with urllib.request.urlopen(request, timeout=120) as response:
                         if on_token and "text/event-stream" in response.headers.get("Content-Type", ""):
                             usage, calls, content = {}, {}, []
+                            kinds = dict(content=0, tool_calls=0, reasoning=0, finish=0, usage=0, other=0)
                             def result():
                                 message = dict(role="assistant", content="".join(content) or None)
+                                self.log.debug("stream finished chunk kinds=%s", kinds)
                                 if calls:
                                     message["tool_calls"] = [calls[i] for i in sorted(calls)]
                                 return dict(usage, _message=message)
@@ -239,10 +259,19 @@ class Device:
                                 if event.get("error"):
                                     raise Refusal("The model could not finish this reply.", 502)
                                 usage = event.get("usage") or usage
+                                if event.get("usage"):
+                                    kinds["usage"] += 1
                                 for choice in event.get("choices", []):
                                     if choice.get("index", 0) != 0:
                                         continue
-                                    delta = choice.get("delta", {})
+                                    delta = choice.get("delta") or {}
+                                    kinds["content"] += bool(delta.get("content"))
+                                    kinds["tool_calls"] += bool(delta.get("tool_calls"))
+                                    kinds["reasoning"] += bool(delta.get("reasoning_content"))
+                                    kinds["finish"] += bool(choice.get("finish_reason"))
+                                    kinds["other"] += not any(delta.get(k) for k in ("content", "tool_calls", "reasoning_content"))
+                                    if choice.get("finish_reason"):
+                                        self.log.debug("stream finish reason=%s", choice["finish_reason"])
                                     for fragment in delta.get("tool_calls", []):
                                         call = calls.setdefault(fragment["index"], dict(id="", type="function", function=dict(name="", arguments="")))
                                         if fragment.get("id"):
@@ -254,6 +283,7 @@ class Device:
                                         emitted = True
                                         content.append(token)
                                         on_token(token)
+                                self.log.debug("chunk kinds counted=%s", kinds)
                             return result()
                         payload = json.load(response)
                         if payload.get("code") == 150004 or (isinstance(payload.get("error"), dict) and payload["error"].get("code") == 150004):
@@ -267,6 +297,7 @@ class Device:
                             return dict(payload.get("usage") or {}, _message=message)
                         return payload
             except urllib.error.HTTPError as error:
+                self.log.exception("request HTTP exception path=%s", path)
                 # Never expose an upstream response or URL: it may contain credentials.
                 try:
                     raw = error.read(65536) if error.fp else b""
@@ -280,7 +311,13 @@ class Device:
                 time.sleep(delay)
                 attempt += 1
             except (urllib.error.URLError, TimeoutError, OSError):
+                self.log.exception("request transport exception path=%s", path)
                 raise Refusal("Cannot reach the device. Check its address and that its model is running.", 503) from None
+            except Exception:
+                self.log.exception("request exception path=%s", path)
+                raise
+            finally:
+                self.log.debug("request attempt finished; lane released path=%s", path)
 
     @staticmethod
     def is_chat_model(row):
@@ -389,6 +426,8 @@ class App:
         self.poke()
         self.worker.join(timeout=2)
         self.scheduler.thread.join(timeout=2)
+        for handler in self.device.log.handlers:
+            handler.close()
 
     def live(self):
         return dict(source="device", endpoint=self.device.base,
@@ -462,6 +501,8 @@ class App:
             Device(self.root, saved["base"], self.device.key, saved["model"])
             atomic_write(path, json.dumps(saved, indent=2) + "\n")
             self.config = load_config(self.root, self.overrides)
+            for handler in self.device.log.handlers:
+                handler.close()
             self.device = Device(self.root, self.config["base"], self.config["key"], self.config["model"])
             self.settings["botName"] = self.config["name"]
             self.poke()
@@ -568,6 +609,7 @@ class App:
                 options["thinking"] = True
             if rounds == 6:
                 options["allow_tools"] = False
+            self.device.log.debug("loop request round=%d empty=%d options=%s", rounds, empty, options)
             usage = self.device.chat(messages, on_token, **options) or {}
             count = usage.get("total_tokens")
             total = total + int(count) if total is not None and count is not None else None
@@ -589,6 +631,7 @@ class App:
             messages.append(dict(role="assistant", content=message.get("content"), tool_calls=calls))
             for call in calls:
                 name = call.get("function", {}).get("name", "")
+                self.device.log.debug("tool call assembled name=%s argument_length=%d", name, len(call.get("function", {}).get("arguments", "")))
                 try:
                     arguments = json.loads(call.get("function", {}).get("arguments", "{}"))
                     if not isinstance(arguments, dict):
@@ -601,12 +644,15 @@ class App:
                     if name == "update_state" and arguments.get("target") == "routine" and arguments.get("action") == "create":
                         created.add(result.split()[2])
                 except Refusal as error:
+                    self.device.log.exception("tool refused name=%s", name)
                     result = "Refused: " + str(error)
                 except (ValueError, TypeError, KeyError, OSError):
+                    self.device.log.exception("tool exception name=%s", name)
                     result = "Refused: The tool arguments or file contents are invalid."
                 # Never include the configured credential in tool results or receipts.
                 if self.device.key:
                     result = result.replace(self.device.key, "[redacted]")
+                self.device.log.debug("tool executed name=%s result_length=%d", name, len(result))
                 messages.append(dict(role="tool", tool_call_id=call["id"], content=result))
                 with self.lock:
                     receipt = self.message("titan", name + (" refused" if result.startswith("Refused:") else " completed"), "system")
@@ -620,9 +666,13 @@ class App:
         target, action = args.get("target"), args.get("action")
         with self.lock:
             if target in ("memory", "profile"):
+                # The device emits shorthand memory writes as {target, text}.
+                # Explicit actions and canonical facts retain their existing meaning.
+                if "action" not in args and "text" in args:
+                    action = "write"
                 if action not in ("write", "set", "forget"):
                     raise Refusal("Use write or forget for a memory.")
-                fact = args.get("fact", "")
+                fact = args.get("fact", args.get("text", ""))
                 if not isinstance(fact, str):
                     raise Refusal("A memory must be text.")
                 fact = " ".join(fact.split())
@@ -755,6 +805,8 @@ class App:
                     self.poke()
                 def token(chunk):
                     with self.lock:
+                        if not reply["text"]:
+                            self.device.log.debug("final text started conversation=%s", conversation)
                         reply["text"] += chunk
                         self.poke()
                 try:
@@ -766,17 +818,19 @@ class App:
                         count = (usage or {}).get("total_tokens")
                         self.tokens = self.tokens + int(count) if self.tokens is not None and count is not None else None
                 except Exception as error:
+                    self.device.log.exception("turn exception conversation=%s", conversation)
                     with self.lock:
                         reply["type"] = "turn-failed"
                         reply["text"] = str(error) if isinstance(error, Refusal) else "Titan could not finish this reply. Please try again."
                 with self.lock:
                     self.save_messages(transcript, conversation)
+                    self.device.log.debug("final text finished conversation=%s status=%s length=%d", conversation, reply["type"], len(reply["text"]))
                     if run is not None and path.exists():
                         run.update(finishedAt=int(time.time() * 1000), status="error" if reply["type"] == "turn-failed" else "ok", detail=reply["text"])
                         atomic_write(runs_path, json.dumps(runs))
             except (OSError, ValueError, TypeError):
                 # A malformed routine file cannot kill the shared turn worker.
-                pass
+                self.device.log.exception("worker exception conversation=%s", conversation)
             finally:
                 with self.lock:
                     if isinstance(job, tuple):

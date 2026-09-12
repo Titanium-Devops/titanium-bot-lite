@@ -566,3 +566,62 @@ A pause stops future/queued work; a turn already executing can finish. Schedules
 follow the server's local timezone, and queue saturation skips occurrences rather
 than accumulating unbounded work. Voice and model start/stop remain later steps.
 No commit was attempted; the initially clean tree contains only this step's changes.
+
+## Step 3b
+
+Cause: the captured device call uses `update_state({"target":"memory","text":"…"})`, but Lite required `action` and `fact`, so it refused the assembled call instead of saving the memory.
+
+Version: **0.1.7**, incremented from 0.1.6.
+
+Changed files:
+
+- `lite/server.py`: accepts the device's shorthand memory write, mapping `text`
+  to the existing fact validator and defaulting a missing action to `write` only
+  when `text` is present. Explicit actions and canonical `fact` values retain
+  precedence; memory length, type, path and tier checks still apply.
+- `lite/server.py`: adds stdlib file logging. Start with `LITE_DEBUG=1` for loop
+  request/round/options, lane wait/release, request sent, cumulative stream chunk
+  kinds, finish reasons, assembled tool name and argument length, executed tool
+  result length, and final transcript text start/finish/status/length. Diagnostics
+  go to `<data dir>/lite.log`; exception tracebacks are written there even when
+  debug is off. The configured API key is redacted, and ordinary progress records
+  contain lengths rather than prompt, argument or result contents. File handlers
+  close on shutdown and configuration replacement.
+- `tests/test_device_turn.py`: replays the unchanged
+  `tests/fixtures/device-stream-tool-call.sse` through `App.send`, the queued
+  worker, real `Device.chat`/SSE parsing, real OneLane lock, tool execution and
+  transcript persistence. Only HTTP transport is faked. With the first-run
+  greeting and seed setup still present, it asserts the Biscuit fact is saved,
+  the tool-call ID and successful result reach the second request, and the final
+  streamed answer reaches the persisted transcript within one second. It also
+  checks lane reacquisition, debug milestones, shorthand validation, refusal
+  tracebacks, debug-off error logging, key redaction and recovery on the next turn.
+- `tests/test_config.py` and `lite/VERSION`: update version assertions and the
+  release number. `docs/REPORT.md`: this section.
+
+Regression evidence: before the fix, the captured-stream test failed with an
+empty memory list. After the fix it passes, including the one-second bound.
+Fragment assembly, `[DONE]` handling, the second request and lane release all
+worked with this fixture; no lock or stream-parser rewrite was needed.
+
+Simplifications: reused the existing memory validator/writer, tool-result
+feedback, serialized worker and transcript path. No new dependencies.
+
+Verification:
+
+- `python3 -m unittest -q`: **72 tests, 68 passed, 4 skipped**, exit 0.
+  The skips are the existing sandbox-denied live-loopback tests. The suite also
+  checks console JavaScript syntax using Node without a browser.
+- `python3 -m compileall -q lite tests`: passed.
+- `python3 -m lite --version`: **0.1.7**.
+- `git diff --check`: passed. Git's macOS startup emitted sandbox cache/FSEvents
+  diagnostics without failing the check.
+- No separate linter or typechecker is configured. No browser or GUI was launched,
+  and no commit was attempted.
+
+Remaining limits: the fixture proves and fixes the refused memory write, but it
+cannot reproduce or establish the complete cause of the observed 270-second
+live-device silence. With the fake final response, the pre-fix loop still reached
+that answer after refusing the tool. Live inference and device timing remain
+unverified; the new log milestones expose where a future device turn waits or
+fails. Debug logging is opt-in and appends to `lite.log` without rotation.
