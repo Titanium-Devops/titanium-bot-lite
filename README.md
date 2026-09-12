@@ -146,7 +146,7 @@ See `SPEC.md` for the plan, `docs/console-pieces.md` for the route contract, and
 Once the farm release is published:
 
 ```sh
-python3 -m pip install tinyapp-farm
+python3 -m pip install tiinyapp-farm
 farm device
 farm install titanium-tiiny-bot
 farm start titanium-tiiny-bot
@@ -154,7 +154,7 @@ farm status
 farm stop titanium-tiiny-bot
 ```
 
-Farm keeps your data in `~/tinyapps/titanium-tiiny-bot/data`, shares device settings
+Farm keeps your data in `~/tiinyapps/titanium-tiiny-bot/data`, shares device settings
 through `TIINY_BASE` and `TIINY_KEY`, and uses one shared `ONELANE_DIR` for cooperating
 apps. `farm update titanium-tiiny-bot` preserves data and stops the previous process;
 start it again when ready. A manifest whose checksum is `pending` cannot install yet.
@@ -164,7 +164,7 @@ For a direct checkout, stop the server using the same data directory:
 ```sh
 python3 -m lite --stop
 # Or, for a farm launch:
-python3 -m lite --stop --data-dir ~/tinyapps/titanium-tiiny-bot/data
+python3 -m lite --stop --data-dir ~/tiinyapps/titanium-tiiny-bot/data
 ```
 
 `lite.pid` is stored inside that data directory; a held `.lite.lock` distinguishes a
