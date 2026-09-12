@@ -23,6 +23,27 @@ class Elements(HTMLParser):
 
 
 class ConsoleContractTests(unittest.TestCase):
+    def test_tiiny_watermark_once_per_page_with_inline_sizes(self):
+        for page, sizes in (
+            ('console.html', {'width': '40vw', 'max-width': '520px',
+                              'min-width': '220px', 'height': 'auto'}),
+            ('index.html', {'width': '24vw', 'height': 'auto'}),
+        ):
+            with self.subTest(page=page):
+                marks = [(tag, attrs) for tag, attrs in
+                         Elements((CONSOLE / page).read_text()).items
+                         if 'tiiny-watermark' in attrs.get('class', '').split()]
+                self.assertEqual(len(marks), 1)
+                tag, attrs = marks[0]
+                self.assertEqual(tag, 'img')
+                self.assertEqual(attrs['src'], 'brand/tiiny-logo.svg')
+                self.assertEqual(attrs['alt'], '')
+                self.assertEqual(attrs['aria-hidden'], 'true')
+                declarations = dict(part.strip().split(':', 1) for part in
+                                    attrs['style'].split(';') if part.strip())
+                self.assertEqual({key.strip(): value.strip() for key, value in
+                                  declarations.items()}, sizes)
+
     def test_unchanged_ports_match_vendor(self):
         for name in ('tokens.css', 'motion.css', 'backgrounds.css', 'mascots.css',
                      'boot.css', 'settings.css', 'files-viewer.css', 'voice-call.css',

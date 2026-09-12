@@ -361,3 +361,44 @@ its model is running.” These numbers establish the local budget only; they do
 not establish live Ornith response performance. Live device inference, socket
 integration, and rendered layout remain the verification gaps. The report and
 all implementation changes are left uncommitted as instructed.
+
+## Step 1e
+
+Date: 2026-09-11. Added one decorative `tiiny-watermark` image using
+`brand/tiiny-logo.svg` to each of `lite/console/console.html` and `index.html`.
+`styles.css` fixes the console mark at the viewport centre, above the photograph
+and ambient layers (z-index 0) and below the stage/transcript (z-index 2).
+`door.css` fixes the door mark at the same centre behind its content (z-index 1).
+Both marks ignore pointer events and have no filter/blur. No plate assets,
+picker behavior, or plate styling changed.
+
+Computed CSS opacity is **0.08** on Titan Nebula and Deep Current, **0.12** on
+the light Misty plate (`data-bg="bg1-misty"`), and **0.08** on the door.
+The default rule also keeps the mark present on custom plates at 0.08.
+Opacity follows the selected built-in plate, independently of the UI theme.
+
+Expected image element bounding boxes in CSS pixels, calculated rather than
+rendered: console width = max(220, min(0.40 × viewport width, 520)); door width
+= 0.24 × viewport width, with no minimum or maximum requested for the door.
+The SVG's 120 × 42 viewBox gives height = width × 0.35. Both use x =
+(viewport width − image width) / 2 and y = (viewport height − image height) / 2.
+
+| Page | Viewport | x | y | Width | Height |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Console | 1280 × 800 | 384 | 310.4 | 512 | 179.2 |
+| Console | 390 × 844 | 85 | 383.5 | 220 | 77 |
+| Door | 1280 × 800 | 486.4 | 346.24 | 307.2 | 107.52 |
+| Door | 390 × 844 | 148.2 | 405.62 | 93.6 | 32.76 |
+
+`tests/test_console.py` adds one test checking exactly one watermark per page,
+its class, asset, decorative attributes, and expected inline sizes.
+`lite/VERSION` advances from **0.1.3 to 0.1.4**, with existing version assertions
+in `tests/test_config.py` updated accordingly. The only other changed file is
+this report. No dependencies or new abstraction were needed.
+
+Verification: `python3 -m unittest` passed with **40 tests, 36 passed and 4
+skipped** (existing socket tests cannot bind in this sandbox). Python compileall
+and `git diff --check` passed; the suite includes JavaScript syntax checks.
+No separate lint/typecheck tools are configured. No browser or GUI was launched.
+Rendered measurement and visual comparison remain for the orchestrator, as
+requested; these bounds and opacity values are source-based calculations.

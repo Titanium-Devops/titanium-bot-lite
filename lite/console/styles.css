@@ -61,6 +61,20 @@ select:focus-visible {
     linear-gradient(180deg, rgba(8, 17, 22, 0.15), rgba(8, 17, 22, 0.42)),
     #090d14;
 }
+/* Fixed above the plate and below the stage, independent of transcript scrolling. */
+.tiiny-watermark {
+  position: fixed;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.08;
+  filter: none;
+  pointer-events: none;
+}
+html[data-bg="bg1-misty"] .tiiny-watermark {
+  opacity: 0.12;
+}
 .ambient-backdrop {
   position: absolute;
   z-index: -2;
