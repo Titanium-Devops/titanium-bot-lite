@@ -1,0 +1,19 @@
+# The source distribution carries what the farm archive carries, plus the files a
+# build needs: lite/, brand/, README.md, LICENSE and pyproject.toml. Everything
+# scripts/release.py excludes is excluded here too.
+include LICENSE
+include README.md
+include lite/VERSION
+include lite/tools.json
+recursive-include lite/console *
+recursive-include lite/seeds *
+recursive-include brand *
+prune assets
+prune data
+prune dist
+prune docs
+prune scripts
+prune tests
+prune vendor
+global-exclude *.py[co] .DS_Store
+global-exclude __pycache__/*

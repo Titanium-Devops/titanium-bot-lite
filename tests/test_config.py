@@ -54,7 +54,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_precedence_all_layers(self):
         load_config(self.root)
-        saved = dict(base='http://config/v1', model='config-model', port=8001, bind='127.0.0.1', name='Ada')
+        saved = dict(base='http://config/v1', model='config-model', port=8001, bind='127.0.0.1', name='Ada', mcp=True)
         (self.root / 'config.json').write_text(json.dumps(saved))
         (self.root / 'keys.json').write_text(json.dumps({'apiKey': 'stored-secret'}))
         self.assertEqual(load_config(self.root), saved | {'key': 'stored-secret'})
@@ -62,9 +62,9 @@ class ConfigTests(unittest.TestCase):
         with patch.dict(os.environ, env):
             effective = load_config(self.root)
             self.assertEqual(effective, saved | dict(base='http://env/v1', model='env-model', port=8002, key='env-secret'))
-            code, out, err = self.cli('--base', 'http://cli/v1', '--model', 'cli-model', '--port', '8003', '--bind', 'localhost', '--name', 'CLI', '--key', 'cli-secret', '--show-config')
+            code, out, err = self.cli('--base', 'http://cli/v1', '--model', 'cli-model', '--port', '8003', '--bind', 'localhost', '--name', 'CLI', '--key', 'cli-secret', '--no-mcp', '--show-config')
             self.assertEqual((code, err), (0, ''))
-            self.assertEqual(json.loads(out), dict(base='http://cli/v1', model='cli-model', port=8003, bind='localhost', name='CLI', key='********'))
+            self.assertEqual(json.loads(out), dict(base='http://cli/v1', model='cli-model', port=8003, bind='localhost', name='CLI', mcp=False, key='********'))
             self.assertNotIn('secret', out)
         self.assertEqual(json.loads((self.root / 'config.json').read_text()), saved)
 

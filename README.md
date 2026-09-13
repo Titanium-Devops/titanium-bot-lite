@@ -11,15 +11,52 @@ model is still done in your device's own settings.
 Made by Titanium Computing. The full product, with a team of bots, mail, a browser and a computer of
 its own, is at https://titanium.bot.
 
-## Run it in ten minutes
+## Install Titan
 
-You need your Tiiny with a chat model already running, and a Mac or Linux computer on the same
-network. Keep that computer awake while you use Titan. No cloud account or paid service is needed.
+This takes about ten minutes. You need your Tiiny with a chat model already running, and a Mac or
+Linux computer on the same network. Keep that computer awake while you use Titan. No cloud account
+or paid service is needed.
+Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/) first; on Linux
+your software manager can install it. Open Terminal and type `python3 --version` to check. Then
+pick one of the three ways in.
 
-1. Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/).
-   On Linux, your software manager can install Python 3.11 or newer. Nothing else needs installing.
-2. Download this project and open Terminal in its folder. Type `python3 --version` to check Python.
-3. Open TiinyOS Settings > API Key. Copy the OpenAI address and the API key shown there.
+**With the farm**, which keeps your data and settings in one place for every Tiiny app:
+
+```sh
+python3 -m pip install tiinyapp-farm
+farm device
+farm install titanium-tiiny-bot
+farm start titanium-tiiny-bot
+farm status
+farm stop titanium-tiiny-bot
+```
+
+`farm device` asks for the address and key from the next paragraph and hides them as you type,
+so steps 1 and 2 below are already done. Farm keeps your data in
+`~/tiinyapps/titanium-tiiny-bot/data`, passes your device settings to Titan through `TIINY_BASE`
+and `TIINY_KEY`, and uses one shared `ONELANE_DIR` for apps that take turns with the device.
+`farm update titanium-tiiny-bot` keeps your data and stops the running process; start it again
+when you are ready.
+
+**With pip**, if you would rather have one command and no farm:
+
+```sh
+python3 -m pip install titanium-bot-lite
+titanbot-lite
+```
+
+`titanbot-lite` and `python3 -m lite` are the same program, so every command in the rest of this
+README works with either name.
+
+**From a copy of this project**, which is what you want if you are changing the code:
+
+```sh
+python3 -m lite
+```
+
+Then, unless `farm device` already asked you:
+
+1. Open TiinyOS Settings > API Key. Copy the OpenAI address and the API key shown there.
    In Terminal, set these two values. Replace the example address with the address you copied:
 
    ```sh
@@ -32,13 +69,8 @@ network. Keep that computer awake while you use Titan. No cloud account or paid 
 
    The key stays hidden as you paste. Do not put it in chat or a screenshot. These commands work
    in the usual Mac and Linux terminals. Set them again if you open a new terminal.
-4. Start Titan:
-
-   ```sh
-   python3 -m lite
-   ```
-
-5. On this computer, open `http://localhost:7788`. On your phone, join the same Wi-Fi and open
+2. Start Titan with the command for the way you installed it.
+3. On this computer, open `http://localhost:7788`. On your phone, join the same Wi-Fi and open
    `http://YOUR-COMPUTER-ADDRESS:7788`, replacing `YOUR-COMPUTER-ADDRESS` with the computer's local
    IP address from its network settings. Press **Open your console** and send a message.
 
@@ -101,6 +133,7 @@ Use `default` to choose the first chat model the device lists.
 | `port` | `7788` | The port for this console. |
 | `bind` | `0.0.0.0` | Listen on all network interfaces; use `127.0.0.1` for this computer only. |
 | `name` | `Titan` | Your assistant's name. |
+| `mcp` | `true` | Offer Titan's saved facts and skills to your device's own chat, read only. Set it to `false`, or start with `--no-mcp`, to close that door. |
 
 Command-line options `--base`, `--model`, `--key`, `--port`, `--bind` and `--name` take priority
 over environment values (`TIINY_BASE`, `TIINY_MODEL`, `TIINY_KEY`, `TIINY_PORT`), then
@@ -118,6 +151,20 @@ python3 -m lite --show-config
 
 Port 7788 keeps Lite separate from the full product's local relay on 7777. If the selected port
 is busy, choose another with `python3 -m lite --port 7789` or change `port` in `config.json`.
+
+## Let your device's chat read what Titan knows
+
+TiinyOS can add a custom MCP connector, which is its way of reaching a program running on
+your computer. Titan offers one, so a conversation in TiinyOS can look up a fact you told
+Titan or read one of its skills. It reads only: nothing the device asks can change a
+memory, a skill or a file.
+
+Open `http://localhost:7788/api/mcp` while Titan is running. It prints the address to add,
+which is your computer's address with `/mcp` on the end, like
+`http://192.168.1.20:7788/mcp`. In TiinyOS, open Settings > Connectors, add a custom MCP
+connector over HTTP and paste that address. Their connector actions run inside TiinyOS
+Task Mode. Set `mcp` to `false` in `config.json`, or start Titan with `--no-mcp`, if you
+would rather your device could not read any of this.
 
 ## Version numbers
 
@@ -153,25 +200,9 @@ both apps before starting them. Lite otherwise keeps its lock inside its data fo
 See `SPEC.md` for the plan, `docs/console-pieces.md` for the route contract, and
 `docs/REPORT.md` for delivery evidence and current limits.
 
-## Install with farm
+## Stopping, and building a release
 
-Once the farm release is published:
-
-```sh
-python3 -m pip install tiinyapp-farm
-farm device
-farm install titanium-tiiny-bot
-farm start titanium-tiiny-bot
-farm status
-farm stop titanium-tiiny-bot
-```
-
-Farm keeps your data in `~/tiinyapps/titanium-tiiny-bot/data`, shares device settings
-through `TIINY_BASE` and `TIINY_KEY`, and uses one shared `ONELANE_DIR` for cooperating
-apps. `farm update titanium-tiiny-bot` preserves data and stops the previous process;
-start it again when ready. A manifest whose checksum is `pending` cannot install yet.
-
-For a direct checkout, stop the server using the same data directory:
+Stop the server using the same data directory it started with:
 
 ```sh
 python3 -m lite --stop
@@ -186,7 +217,12 @@ failed on the next start. Device-side inference may finish after the host exits,
 best-effort voice-model release may not complete; check TiinyOS if a model stays loaded.
 
 Build the farm archive with `python3 scripts/release.py`. It writes
-`dist/titanium-tiiny-bot-0.1.12.tar.gz` and prints its SHA-256. Only `lite/`, `brand/`
-and this README are packaged, including `lite/VERSION`; developer dependencies,
-tests, caches and user data are excluded. The archive is reproducible for identical
-source bytes and executable permissions.
+`dist/titanium-tiiny-bot-0.1.12.tar.gz` and prints its SHA-256, which are the URL target
+and the checksum the farm manifest carries. Only `lite/`, `brand/` and this README are
+packaged, including `lite/VERSION`; developer dependencies, tests, caches and user data
+are excluded. The archive is reproducible for identical source bytes and executable
+permissions.
+
+Build the pip package from the same tree with `python3 -m build`, which writes a wheel and
+a source archive into `dist/`. `lite/VERSION` is the only place the version is written, so
+both packages and `--version` always agree.

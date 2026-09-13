@@ -3375,3 +3375,19 @@ body[data-capability-menu] .window-bar {
 
 /* The transcript uses the same coloured Titan kit as the header. */
 .message-avatar.titan-sprite { object-fit: contain; background: transparent; border: 0; border-radius: 0; }
+
+/* Lite: the 44 by 44 floor docs/console-pieces.md section 3 keeps, at every width
+   rather than only under 940 px. Two deliberate absences.
+   The composer textarea is left alone: its box carries no padding and no border so
+   scrollHeight is the text's own height, which the eight-line cap reads.
+   The window bar's "Built for Tiiny" mark is a brand lockup, not a control, and SPEC.md
+   fixes its logo at 16 px in the console header; the bar is a fixed 68 px row over a
+   42 px identity strip, so a 44 px pill would push it open. */
+.icon-button,
+.dialog-close,
+.composer-plus,
+.voice-talk,
+.send-button {
+  min-width: 44px;
+  min-height: 44px;
+}
