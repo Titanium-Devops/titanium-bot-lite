@@ -5,7 +5,8 @@ Built for [Tiiny](https://tiiny.ai).
 
 Titan talks to the model on your pocket device. This first version runs on a Mac or Linux computer
 beside it and gives you chat, file tools, saved memories, an editable persona, a folder of skills and scheduled routines.
-Model start and stop and speech are coming in later steps.
+You can talk to it out loud, using the speech models on your device. Starting and stopping a
+model is still done in your device's own settings.
 
 Made by Titanium Computing. The full product, with a team of bots, mail, a browser and a computer of
 its own, is at https://titanium.bot.
@@ -69,6 +70,12 @@ file and page text is limited to 200 KB. URL fetching has a 10-second timeout an
 addresses and redirects. Uploaded text files are available to the Read tool; pictures and PDFs
 are stored and viewable but are not decoded for the model yet.
 
+Press **Talk** beside the message box to speak instead of typing. Choose Off, Push to talk or
+Always listening in Settings > General, along with the microphone to listen through. Your device
+does the listening and the speaking, so nothing you say leaves your network, and a speech model
+and a voice model both need to be loaded on the device. On a narrow screen the whole screen
+becomes the call. Press any file, memory or skill in the Files panel to read it.
+
 Profile facts are kept in every prompt along with the last 40 dated log facts. A fact over 500
 characters is refused rather than shortened. First-time setup begins with “What should I call
 you?”; say “run first-time setup” to repeat the interview. Change the persona in Settings > General.
@@ -109,7 +116,7 @@ is busy, choose another with `python3 -m lite --port 7789` or change `port` in `
 
 ## Version numbers
 
-The current version is `0.1.9`, stored in `lite/VERSION`, shown in Settings > About and printed
+The current version is `0.1.12`, stored in `lite/VERSION`, shown in Settings > About and printed
 by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
 `0.1.3`. The middle number changes only when Jason says so.
 
@@ -174,7 +181,7 @@ failed on the next start. Device-side inference may finish after the host exits,
 best-effort voice-model release may not complete; check TiinyOS if a model stays loaded.
 
 Build the farm archive with `python3 scripts/release.py`. It writes
-`dist/titanium-tiiny-bot-0.1.9.tar.gz` and prints its SHA-256. Only `lite/`, `brand/`
+`dist/titanium-tiiny-bot-0.1.12.tar.gz` and prints its SHA-256. Only `lite/`, `brand/`
 and this README are packaged, including `lite/VERSION`; developer dependencies,
 tests, caches and user data are excluded. The archive is reproducible for identical
 source bytes and executable permissions.

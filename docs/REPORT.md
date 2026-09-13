@@ -712,3 +712,48 @@ Remaining limits: actual loopback readiness timing and physical-device inference
 cannot be verified in this sandbox. The measurement begins at package import in
 this process, excluding interpreter launch; direct embedded calls long after
 import include that elapsed time and are not fresh CLI startup measurements.
+
+## Audit, 2026-09-13
+
+Version: **0.1.12**, incremented from 0.1.11. The full gap table, the method and every
+measurement are in `docs/AUDIT-2026-09-13.md`; this section records only what changed.
+
+This was the first pass run on a machine that could bind sockets and drive a real browser, so it
+is also the first time the console was measured rather than read. `python3 -m unittest` ran
+**101 tests, 101 passed, 0 skipped** before the changes: every loopback test the earlier steps had
+to skip now runs. Lite was started on a spare port, one chat turn was sent through `POST /api/send`
+and read back through `GET /api/transcript`, and the console was driven in headless WebKit at
+1440x900 and 390x844 with screenshots in `docs/audit-shots/`.
+
+Four defects, each its own commit with a test:
+
+- **Voice shipped in step 5 and no page could reach it.** `door.js` never loaded `voice.js` or
+  `voice-call-avatar.js`, and `app.js` held a click handler on the Talk button that raised a toast
+  saying voice was not connected. Measured before the fix: `window.__voice` undefined at both
+  sizes. Both modules now load before `app.js` and nothing intercepts the press.
+- **No file row opened.** `app.js` writes `data-attachment-open` on every memory, skill and
+  attachment and nothing read it, so `window.__filesViewer.open` was never called. One delegated
+  listener routes them all, and the viewer reads the kind off the path rather than the label, so a
+  skill filed under its frontmatter name opens as the markdown in its `SKILL.md`.
+- **Two product names in the terminal.** The ready line said Titanium Bot Lite, `--stop` said
+  Titanium Tiiny Bot, and the base prompt told the model a third thing. Everything a person reads
+  now says Titanium Tiiny Bot; `titanium-bot-lite` stays as the package and health identity.
+- **No microphone chooser.** `docs/console-pieces.md` section 4 keeps that row in General. The
+  server has carried `micDeviceId` since step 1 and `voice.js` has exported the whole API; only
+  the row was missing.
+
+After: `python3 -m unittest` ran **105 tests, 105 passed, 0 skipped**, exit 0.
+`python3 -m compileall -q lite tests` and `git diff --check` passed. The echo selfcheck passed at
+**41.62 MB** RSS, **23.82 KB** of door resources and **1,998.61 ms** cold start, all inside the
+budget. `python3 -m lite --version` printed 0.1.12.
+
+Not fixed, briefed instead: `docs/STEP-7A.md` finishes SPEC step 2, the one numbered step with no
+brief and no section above, so model start and stop, a LAN endpoint and a pasted cloud key all
+still answer 501. `docs/STEP-7B.md` adds the second memory writer and ranked recall that
+`docs/agent-pieces.md` section 1 asks for. `docs/STEP-7C.md` carries the install path, the
+optional MCP connector and the 44 px sweep.
+
+Remaining limits: a Tiiny is attached over USB and `lite.device.find_base()` found it in 0.9 s at
+its USB address, but it answers `401 auth_failed` without a key and this audit had no access to
+one. So no device inference, no device speech to text, no device text to speech and no model
+lifecycle call was exercised against real firmware. Every model number above is the echo model.
