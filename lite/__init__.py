@@ -1,4 +1,4 @@
-"""Titanium Bot Lite, a small local console."""
+"""Titanium Tiiny Bot, a small local console."""
 import time
 
 # Start before the remaining package and server imports for CLI readiness timing.
