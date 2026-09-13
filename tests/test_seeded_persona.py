@@ -12,7 +12,8 @@ class SeedTests(unittest.TestCase):
     def test_first_run_greeting_seeds_and_owner_edits_survive_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch.dict(os.environ, {'TIINY_MODEL': 'echo', 'TIINY_KEY': '', 'ONELANE_DIR': str(root / '.lane')}):
+            with patch.dict(os.environ, {'TIINY_MODEL': 'echo', 'TIINY_KEY': '', 'ONELANE_DIR': str(root / '.lane'),
+                                       'TIINY_BASE': 'http://192.0.2.10/v1'}):
                 app = App(root)
                 try:
                     self.assertEqual((root / 'persona.md').read_text(), PERSONA)

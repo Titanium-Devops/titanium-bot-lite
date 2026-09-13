@@ -42,13 +42,18 @@ class Voice:
         headers = {'Authorization': 'Bearer ' + device.key, 'Content-Type': content_type}
         url = device.base + path
         if lifecycle:
+            # Model start and stop are management routes, so they hang off the
+            # device root rather than the /v1 model base.
             parsed = urllib.parse.urlsplit(device.base)
-            # TiinyOS management uses the p8800 virtual host on the HTTP surface.
-            authority = parsed.netloc
-            if parsed.port == 8800:
-                authority = '[' + parsed.hostname + ']' if ':' in parsed.hostname else parsed.hostname
-            url = urllib.parse.urlunsplit((parsed.scheme, authority, path, '', ''))
-            headers['Host'] = 'p8800.api.tiiny'
+            url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, '', ''))
+            # On 1.0 firmware every service shares port 80 and nginx picks one out
+            # of the Host header, so name the one we want. On older firmware the
+            # gateway has a port of its own and the header means nothing there, so
+            # sending it pointed these calls at the wrong service. It also used to
+            # be sent with the vhost default base, which resolved to the TiinyOS
+            # proxy and answered 502.
+            if parsed.port in (None, 80):
+                headers['Host'] = 'p8800.api.tiiny'
         try:
             with device.lane.hold(why='Titan voice', wait=90):
                 with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=120) as response:

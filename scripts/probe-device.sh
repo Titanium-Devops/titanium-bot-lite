@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Step 0: ten minutes with the Tiiny. Usage:
-#   TIINY_BASE=http://openai.api.tiiny/v1 (or http://<device-ip>/v1) TIINY_KEY=... TIINY_MODEL=<model id> bash scripts/probe-device.sh
+#   TIINY_KEY=... [TIINY_BASE=http://<device-ip>/v1] [TIINY_MODEL=<model id>] bash scripts/probe-device.sh
+# Without TIINY_BASE it asks lite/device.py to find the box.
 # Prints status codes and short answers only. Never paste the key into a chat or a screenshot.
 set -u
 : "${TIINY_KEY:?set TIINY_KEY (TiinyOS > Settings > API Key)}"
-B="${TIINY_BASE:-http://openai.api.tiiny/v1}"; M="${TIINY_MODEL:-default}"
+B="${TIINY_BASE:-$(python3 -c 'from lite import device; print(device.find_base())')}"
+: "${B:?no Tiiny found; set TIINY_BASE to http://<device-ip>/v1}"
+M="${TIINY_MODEL:-default}"
 H=(-H "Authorization: Bearer $TIINY_KEY" -H "Content-Type: application/json")
 say() { printf '\n== %s\n' "$*"; }
 json() { python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])))' "$1"; }

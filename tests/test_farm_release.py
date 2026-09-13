@@ -48,7 +48,10 @@ class ShutdownTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='lite-stop-')
         self.addCleanup(self.temporary.cleanup)
         self.data = Path(self.temporary.name)
+        # An address, so these subprocesses do not go looking for a real Tiiny:
+        # they are here to measure shutdown, not discovery.
         self.env = os.environ | {'TIINY_DATA_DIR': str(self.data), 'TIINY_MODEL': 'echo',
+                                 'TIINY_BASE': 'http://192.0.2.10/v1',
                                  'ONELANE_DIR': str(self.data / '.onelane')}
 
     def launch(self, ignore_sigint=False):

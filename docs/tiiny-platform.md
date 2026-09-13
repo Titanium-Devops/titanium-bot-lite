@@ -37,7 +37,7 @@ Three protocol surfaces, one shared API key (D1):
 - Ollama `http://ollama.api.tiiny`, text generation only (D12).
 
 Those pretty hostnames come from the CLI's own name resolution. Everything also works by raw address:
-`http://<device-ip>:8800/v1/...` for inference, and `http://<device-ip>/...` with an explicit `Host:`
+`http://<device-ip>/v1/...` for inference, and `http://<device-ip>/...` with an explicit `Host:`
 header (`kb.tiiny.local`, `connector.api.tiiny`, `auth.api.tiiny.local`, `p8800.api.tiiny`,
 `agents.api.tiiny`, `wifi.api.tiiny`, `upgrade.api.tiiny:5555`) for everything else (D8, D5). A process
 on the LAN should use the address and explicit Host headers, never the pretty names.
@@ -170,7 +170,7 @@ https://discord.gg/R5CHUuXy4A, linked from tiiny.ai (P5). Beta terms, NDA or fir
 ## 8. Recommended packaging
 
 **Ship Lite beside the device: one pip-installable Python 3.11+ process, run on the host the Tiiny plugs
-into or any box on the same LAN, talking to `http://<device-ip>:8800/v1` with a Bearer key.** Reasons in
+into or any box on the same LAN, talking to `http://<device-ip>/v1` with a Bearer key.** Reasons in
 order: there is no published on-device package format, so "on it" is not a choice anyone can make today;
 the inference surface is identical either way; and a process beside the device can serve its console to a
 phone, which is what the owner actually wants.
@@ -205,7 +205,9 @@ phone, which is what the owner actually wants.
 
 - `pip install tiiny` and `pip install tiiny-sdk` are both wrong. The SDK installs from a shell script.
 - `device.get_api_key(master_password)` is gone. It is `tiiny init`, `tiiny login`, `tiiny auth key`.
-- `fd80:7:7:7::1` should not stand as the device address. Use discovery plus `<device-ip>:8800`.
+- `fd80:7:7:7::1` should not stand as the device address. Use discovery plus `<device-ip>`, and ask
+  the box which port serves the gateway rather than writing 8800 down: on 1.0 firmware 8800 is
+  refused from another machine and port 80 serves everything.
 - Two spec unknowns are answered: on-device speech exists both directions, and the packaging format
   question has no answer to find, which is itself the answer.
 

@@ -22,7 +22,7 @@ network. Keep that computer awake while you use Titan. No cloud account or paid 
    In Terminal, set these two values. Replace the example address with the address you copied:
 
    ```sh
-   export TIINY_BASE='http://openai.api.tiiny/v1'
+   export TIINY_BASE='http://192.168.1.50/v1'   # your device's address
    printf 'Paste your API key, then press Return: '
    read -rs TIINY_KEY
    export TIINY_KEY
@@ -84,7 +84,7 @@ Use `default` to choose the first chat model the device lists.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `base` | `http://openai.api.tiiny/v1` | Your device's OpenAI API address. |
+| `base` | *empty, meaning "find the device"* | Your device's OpenAI API address. Leave it empty and Lite looks: `TIINY_BASE`, then `~/.tiinyapps/device.json`, then every attached USB link and this machine's own network, on port 39218. An address here or in `TIINY_BASE` wins. |
 | `model` | `default` | The first chat model the device lists, or an exact model ID you choose. |
 | `port` | `7788` | The port for this console. |
 | `bind` | `0.0.0.0` | Listen on all network interfaces; use `127.0.0.1` for this computer only. |

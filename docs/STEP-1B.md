@@ -4,7 +4,7 @@
    so `python3 -m lite` on 7777 showed Jason the wrong console. If the chosen port is busy,
    say so in one plain sentence naming what to do (`--port` or the config file) and exit 1.
 2. Config file: `<data dir>/config.json` (default data dir `./data`), created on first run with
-   every field present and commented in the README: `base` (default http://openai.api.tiiny/v1),
+   every field present and commented in the README: `base` (default empty, meaning "find the device"),
    `model` (default `default`, meaning "the first chat model the device lists"), `port` (7788),
    `bind` (0.0.0.0), `name` ("Titan"). The key stays in `keys.json` at mode 0600 and never in
    config.json. Precedence: command line, then environment (TIINY_BASE, TIINY_MODEL, TIINY_KEY,

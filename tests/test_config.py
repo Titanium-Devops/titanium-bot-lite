@@ -25,6 +25,12 @@ class ConfigTests(unittest.TestCase):
         env = patch.dict(os.environ, {'ONELANE_DIR': str(self.root / '.onelane')}, clear=True)
         env.start()
         self.addCleanup(env.stop)
+        # An empty base in config.json means "find the device". Stub the search
+        # rather than setting TIINY_BASE: the environment outranks config.json,
+        # which is exactly what test_precedence_all_layers is here to measure.
+        found = patch('lite.device.find_base', return_value='http://192.0.2.10/v1')
+        found.start()
+        self.addCleanup(found.stop)
 
     def cli(self, *args):
         out, err = io.StringIO(), io.StringIO()
@@ -37,7 +43,12 @@ class ConfigTests(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def test_defaults_complete_config_and_private_key(self):
-        self.assertEqual(load_config(self.root), DEFAULTS | {'key': ''})
+        # The shipped base is empty and means "find the device", so config.json
+        # keeps it empty and the effective config carries whatever was found.
+        # Writing today's address into the file is how this breaks next week.
+        self.assertEqual(DEFAULTS['base'], '')
+        self.assertEqual(load_config(self.root),
+                         DEFAULTS | {'base': 'http://192.0.2.10/v1', 'key': ''})
         self.assertEqual(json.loads((self.root / 'config.json').read_text()), DEFAULTS)
         self.assertEqual((self.root / 'keys.json').stat().st_mode & 0o777, 0o600)
 
@@ -109,6 +120,9 @@ class ConfigTests(unittest.TestCase):
                 [sys.executable, '-m', 'lite', '--port', str(port), '--bind', '0.0.0.0',
                  '--model', 'echo', '--data-dir', str(self.root)],
                 capture_output=True, text=True, timeout=5,
+                # A child process cannot see the patched search, and this test is
+                # about refusing a busy port, not about finding a device.
+                env=os.environ | {'TIINY_BASE': 'http://192.0.2.10/v1'},
                 cwd=Path(__file__).resolve().parents[1])
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (1, '', f'Port {port} is busy; choose another with --port or in {self.root / "config.json"}.\n'))
@@ -137,16 +151,18 @@ class ConfigTests(unittest.TestCase):
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
-        self.assertEqual((code, out, err), (0, '0.1.10\n', ''))
+        self.assertEqual((code, out, err), (0, __version__ + '\n', ''))
         self.assertFalse((self.root / 'config.json').exists())
-        self.assertEqual(__version__, '0.1.10')
+        self.assertEqual(__version__,
+                         (Path(__file__).resolve().parents[1] / 'lite/VERSION')
+                         .read_text().strip())
 
     def test_settings_model_and_name_survive_restart(self):
         app = App(self.root)
         self.addCleanup(app.close)
         status, _, result = wire(app, 'PATCH', '/api/settings', {'base': 'http://new/v1', 'model': 'chosen', 'botName': 'Ada'})
         self.assertEqual(status, 200)
-        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', '0.1.10'))
+        self.assertEqual((result['base'], result['model'], result['botName'], result['version']), ('http://new/v1', 'chosen', 'Ada', __version__))
         app.close()
         restarted = App(self.root)
         self.addCleanup(restarted.close)
@@ -157,7 +173,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((self.root / 'config.json').read_text(), old)
 
     def test_default_resolves_first_chat_model_and_explicit_skips_discovery(self):
-        device = Device(self.root, DEFAULTS['base'], '', 'default')
+        device = Device(self.root, 'http://192.0.2.10/v1', '', 'default')
         with patch.object(device, 'request', side_effect=[{'data': [{'id': 'embed-a', 'supports_chat': False}, {'id': 'chat-a', 'supports_chat': True}, {'id': 'chat-b', 'capabilities': ['main']}]}, {}]) as request:
             device.chat([], lambda token: None)
             self.assertEqual(request.call_args_list[0].args, ('/models',))
@@ -201,7 +217,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(app.get_settings()['resolvedModel'])
 
     def test_chat_discovery_fallbacks_and_explicit_false(self):
-        device = Device(self.root, DEFAULTS['base'], '', 'default')
+        device = Device(self.root, 'http://192.0.2.10/v1', '', 'default')
         for row, accepted in [
             ({'id': 'yes', 'supports_chat': True, 'type': 'embedding'}, True),
             ({'id': 'no', 'supports_chat': False, 'capabilities': ['main'], 'type': 'Text-to-Text'}, False),

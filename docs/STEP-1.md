@@ -11,7 +11,7 @@ Deliver, in this order, each runnable:
 1. `lite/server.py`: Python 3.11+, standard library only (http.server + threads, or asyncio),
    no pip dependencies. `python3 -m lite` serves the console at http://0.0.0.0:7777 and the
    12 routes plus the SSE poke from docs/console-pieces.md. Config from env: TIINY_BASE
-   (default http://openai.api.tiiny/v1), TIINY_KEY, TIINY_MODEL, and a data dir (default
+   (default empty, meaning "find the device"), TIINY_KEY, TIINY_MODEL, and a data dir (default
    ./data, created on first run: memory/, skills/, routines/, persona.md, keys.json at 0600).
    Use lite/onelane.py for every device call (`with lane.hold(why=...)`), treat device error
    150004 and a 502 upstream error as "wait and retry" with a bounded backoff (copy the

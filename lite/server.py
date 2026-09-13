@@ -63,7 +63,12 @@ def atomic_write(path: Path, content: str, mode=0o644):
         temporary.unlink(missing_ok=True)
 
 
-DEFAULTS = dict(base="http://openai.api.tiiny/v1", model="default", port=7788,
+# An empty base means "find the device". It is deliberately not an address: a
+# Tiiny's address is a DHCP lease, so writing today's address into config.json is
+# how this stops working next week. The old default was http://openai.api.tiiny/v1,
+# a name the TiinyOS desktop app puts in /etc/resolver, so it resolved on one Mac
+# and nowhere on Linux, which this bot also runs on.
+DEFAULTS = dict(base="", model="default", port=7788,
                 bind="0.0.0.0", name="Titan")
 
 
@@ -89,6 +94,14 @@ def load_config(root, overrides=None):
         if "TIINY_" + field.upper() in os.environ:
             values[field] = os.environ["TIINY_" + field.upper()]
     values.update({k: v for k, v in (overrides or {}).items() if v is not None})
+    if isinstance(values.get("base"), str) and not values["base"].strip():
+        from . import device as tiiny_device
+        values["base"] = tiiny_device.find_base()
+        if not values["base"]:
+            raise Refusal(
+                "No Tiiny found. Looked at TIINY_BASE, ~/.tiinyapps/device.json, "
+                "the USB links and this machine's own network. Set --base or "
+                "TIINY_BASE to the device's address.")
     try:
         values["port"] = int(values["port"])
         if not 1 <= values["port"] <= 65535:
@@ -218,7 +231,13 @@ class Device:
             raise Refusal("Use a plain HTTP or HTTPS model address without embedded credentials.")
         self.base, self.key, self.model = base.rstrip("/"), key, model
         self.resolved_model = None if model == "default" else model
-        self.lane = OneLane(host=urllib.parse.urlsplit(base).hostname, key=key,
+        # Hand the lane the port the base already names. OneLane probes the
+        # device for it when the port is left out, and it must not: we already
+        # know, the lane has to agree with the rest of this class, and two HTTP
+        # probes on every construction is not a thing to pay for an answer we
+        # are holding.
+        self.lane = OneLane(host=parsed.hostname, key=key,
+                            port=parsed.port or (443 if parsed.scheme == "https" else 80),
                             owner="Titanium Bot Lite", settle_s=0)
         self.busy_budget = 90.0
         self.log = logging.Logger("lite", logging.DEBUG if os.getenv("LITE_DEBUG") == "1" else logging.WARNING)
@@ -513,8 +532,11 @@ class App:
             saved = DEFAULTS | json.loads(path.read_text()) | changes
             if any(not isinstance(v, str) or not v.strip() for k, v in changes.items()):
                 raise Refusal("Enter a nonempty address, model and name.")
-            # Validate the saved address even when an environment override is active.
-            Device(self.root, saved["base"], self.device.key, saved["model"])
+            # Validate the saved address even when an environment override is
+            # active. An empty base is legal and means "find the device", which is
+            # the shipped default, so there is nothing to validate in that case.
+            if str(saved.get("base") or "").strip():
+                Device(self.root, saved["base"], self.device.key, saved["model"])
             atomic_write(path, json.dumps(saved, indent=2) + "\n")
             self.config = load_config(self.root, self.overrides)
             self.voice.tts_model = None
