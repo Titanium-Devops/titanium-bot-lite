@@ -135,6 +135,14 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertNotIn('Voice is not connected yet', app)
         self.assertNotIn("getElementById('voice-talk').addEventListener", app)
 
+    def test_every_file_row_reaches_the_one_viewer(self):
+        app = (CONSOLE / 'app.js').read_text()
+        self.assertIn("closest?.('[data-attachment-open]')", app)
+        self.assertIn('viewer.open({path:row.dataset.attachmentOpen', app)
+        # The kind comes off the path, so a skill filed under its frontmatter name still opens as
+        # the markdown in its SKILL.md rather than as a download.
+        self.assertIn('const kind = kindFor(path);', (CONSOLE / 'files-viewer.js').read_text())
+
     def test_dropped_modules_are_absent(self):
         for name in ('gateway-adapter.js', 'adapter.js', 'marketplace-bots.js', 'marketplace',
                      'screen-tile.js', 'cloud-browser.js', 'code-tasks.js', 'gap-badge.js',
