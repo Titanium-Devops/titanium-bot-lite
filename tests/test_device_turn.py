@@ -13,7 +13,7 @@ from tests.test_server import AppCase
 
 class DeviceTurnTests(AppCase):
     def setUp(self):
-        debug = patch.dict(os.environ, LITE_DEBUG='1')
+        debug = patch.dict(os.environ, LITE_DEBUG='1', TIINY_BASE='http://192.0.2.10/v1')
         debug.start()
         self.addCleanup(debug.stop)
         super().setUp()
@@ -76,7 +76,7 @@ class DeviceTurnTests(AppCase):
 
     def test_exception_logs_traceback_without_debug_and_worker_recovers(self):
         self.app.close()
-        with patch.dict(os.environ, LITE_DEBUG='0'):
+        with patch.dict(os.environ, LITE_DEBUG='0', TIINY_BASE='http://192.0.2.10/v1'):
             self.app = App(self.temp.name)
         self.addCleanup(self.app.close)
         self.app.device.model = self.app.device.resolved_model = 'offline-model'

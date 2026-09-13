@@ -21,7 +21,7 @@ push, no code sandboxes, no marketplace, no team of bots. One owner, one Titan, 
   models up to 120B on the device. TiinyOS runs them and an Agent Store of existing open-source
   agents installed as services. There is NO documented way to submit an app to that store and no
   package format, so "Tinyverse" is not a delivery target.
-- The model API is OpenAI-compatible at http://<device-ip>:8800/v1 with a Bearer key from the
+- The model API is OpenAI-compatible at http://<device-ip>/v1 with a Bearer key from the
   official CLI (`tiiny init`, `tiiny login`, `tiiny auth key`; the official SDK installs from a shell
   script at files.tiinycdn.com, not pip). Chat completions, embeddings, images, speech-to-text
   (POST /v1/audio/transcriptions) and text-to-speech (POST /v1/audio/speech) are documented. Model
@@ -70,7 +70,9 @@ Copy for a person is plain words; no em dashes.
 ### Packaging: beside the device, not on it (docs/tiiny-platform.md)
 One pip-installable Python 3.11+ package, `titanium-bot-lite`, run on the Mac or any LAN box the
 Tiiny is reachable from; `titanium-bot-lite start` serves the console on the LAN and talks to the
-device at <device-ip>:8800. Optional second form: register Lite as a custom MCP connector in
+device at <device-ip>, on whichever port that firmware serves the gateway on: 1.0 binds 8800 to
+the container bridge only and routes everything through port 80, older firmware answers on 8800.
+Lite asks rather than assumes. Optional second form: register Lite as a custom MCP connector in
 TiinyOS so their own chat can reach Titan's memory and skills.
 
 ### The console (docs/console-pieces.md)
