@@ -17,7 +17,12 @@
   function general(){
     return group('appearance','Appearance',row('Theme','Choose how the console looks.',select('theme',facts.theme,[['dusk','Dusk'],['mist','Mist'],['ink','Ink']],'Theme'))+row('Language','The language saved for this device.',select('language',facts.language,[['en','English'],['es','Español'],['fr','Français']],'Language'))+'<div data-settings-mount="background"></div>')
       +group('assistant','Your assistant',row('Bot name','What you call your assistant.',input('botName',facts.botName,'Bot name'))+row('Personality','How Titan should answer you.',input('persona',facts.persona,'Personality',true)))
-      +group('voice','Voice',row('Voice','Choose when Titan listens.',select('voiceMode',facts.voice?.mode||'off',[['off','Off'],['push','Push to talk'],['always','Always listening']],'Voice'))+row('Speech to text','The speech model on your device.','<span data-asr-model>Reading…</span>')+row('Text to speech','The voice model on your device.','<span data-tts-model>Reading…</span>'));
+      // The microphone row is drawn only when this browser can name the microphones, which is the
+      // surface's own rule: a fact the machine could not answer omits its row rather than showing an
+      // empty one. voice.js owns that answer, so an absent module means no row at all.
+      +group('voice','Voice',row('Voice','Choose when Titan listens.',select('voiceMode',facts.voice?.mode||'off',[['off','Off'],['push','Push to talk'],['always','Always listening']],'Voice'))
+        +(global.__voice?.supportsMicChoice?row('Microphone','Which microphone Titan listens through.',`<select data-setting="micDeviceId" aria-label="Microphone"><option value="">Reading…</option></select>`):'')
+        +row('Speech to text','The speech model on your device.','<span data-asr-model>Reading…</span>')+row('Text to speech','The voice model on your device.','<span data-tts-model>Reading…</span>'));
   }
   function usage(){
     return group('usage','This process',(facts.usage?.tokens==null?'':row('Tokens used','Work completed since the server started.',`<span>${esc(facts.usage.tokens)}</span>`))+(facts.usage?.minutes==null?'':row('Minutes answering','Time spent waiting for answers.',`<span>${esc(facts.usage.minutes)}</span>`)));
@@ -36,6 +41,21 @@
     }catch(error){
       if(ticket===generation){const status=document.querySelector('[data-settings-status]');if(status)status.textContent='Device models are unavailable. You can still edit the API address and model.';}
     }
+  }
+  // A browser names a microphone only after it has been allowed to hear one, so before that every
+  // label is an empty string. Numbering them is the honest fallback: the person can still tell two
+  // apart and pick the other one, and the names arrive on their own once they have talked once.
+  async function fillMicrophones(host,ticket){
+    const field=host.querySelector('[data-setting="micDeviceId"]');
+    if(!field)return;
+    let inputs=[];
+    // A microphone with no id of its own IS the usual one, so it is not offered twice. A browser
+    // that has never been allowed to listen reports exactly one of those and nothing else.
+    try{inputs=(await global.navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'&&d.deviceId&&d.deviceId!=='default');}catch{inputs=[];}
+    if(ticket!==generation)return;
+    const chosen=facts.micDeviceId||'';
+    const options=[['','This device’s usual microphone'],...inputs.map((d,index)=>[d.deviceId,d.label||`Microphone ${index+1}`])];
+    field.innerHTML=options.map(([id,name])=>`<option value="${esc(id)}"${chosen===id?' selected':''}>${esc(name)}</option>`).join('');
   }
   async function open(id='general'){
     const ticket=++generation;
@@ -57,6 +77,7 @@
           host.querySelector('[data-asr-model]').textContent=voice.asrModel||'No speech model loaded';
           host.querySelector('[data-tts-model]').textContent=voice.ttsModel||'No voice model loaded';
         }catch{if(ticket===generation){host.querySelector('[data-asr-model]').textContent='Unavailable';host.querySelector('[data-tts-model]').textContent='Unavailable';}}
+        await fillMicrophones(host,ticket);
       }
       for(const entry of contributors.values())if(entry.section===current){host.insertAdjacentHTML('beforeend',entry.markup());entry.fill?.(host);}
       document.dispatchEvent(new CustomEvent('titanbot:settings-section',{detail:{id:current,host}}));
@@ -80,6 +101,9 @@
         global.__voice?.stop();
         if(global.__voice){global.__voice._state.settings=facts.voice;global.__voice._adoptTalkMode(facts.voice.mode);}
       }
+      // The saved choice has to reach the module that opens the stream, not only the file. Without
+      // this the next press would still open the usual microphone until the page was reloaded.
+      if(name==='micDeviceId')global.__voice?.setMicDeviceId?.(facts.micDeviceId??field.value);
       if((name==='base'||name==='model')&&current==='model')await model(document.querySelector('[data-settings-section]'),generation);
       if(name==='theme'){document.documentElement.dataset.theme=facts.theme;try{localStorage.setItem('machineRoom.theme',facts.theme);}catch{}}
       if(status)status.textContent=Object.keys(changes).some(key=>(key==='base'||key==='model')&&changes[key]!==facts[key])?'Saved; command-line or environment settings still override this value.':'Saved';

@@ -143,6 +143,17 @@ class ConsoleContractTests(unittest.TestCase):
         # the markdown in its SKILL.md rather than as a download.
         self.assertIn('const kind = kindFor(path);', (CONSOLE / 'files-viewer.js').read_text())
 
+    def test_general_offers_a_microphone_when_the_browser_can_name_one(self):
+        settings = (CONSOLE / 'settings.js').read_text()
+        # Drawn only when voice.js says the browser can enumerate, which is the surface's own rule:
+        # a fact the machine could not answer omits its row instead of showing an empty control.
+        self.assertIn('global.__voice?.supportsMicChoice?row(\'Microphone\'', settings)
+        self.assertIn('data-setting="micDeviceId"', settings)
+        self.assertIn('async function fillMicrophones(host,ticket)', settings)
+        self.assertIn("d.kind==='audioinput'&&d.deviceId&&d.deviceId!=='default'", settings)
+        # The choice has to reach the module that opens the stream, not only the settings file.
+        self.assertIn("global.__voice?.setMicDeviceId?.(", settings)
+
     def test_dropped_modules_are_absent(self):
         for name in ('gateway-adapter.js', 'adapter.js', 'marketplace-bots.js', 'marketplace',
                      'screen-tile.js', 'cloud-browser.js', 'code-tasks.js', 'gap-badge.js',
