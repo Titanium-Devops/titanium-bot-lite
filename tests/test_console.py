@@ -115,6 +115,23 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertNotIn('id="composer-aside"', markup)
         self.assertNotIn('id="workspace-list"', markup)
 
+    def test_the_forty_four_pixel_floor_holds_at_every_width(self):
+        css = (CONSOLE / 'styles.css').read_text()
+        block = css[css.index('/* Lite: the 44 by 44 floor'):]
+        floor = block[block.index('*/') + 2:]
+        self.assertIn('composer textarea is left alone', block)
+        # Outside a media query, so a desktop mouse gets the same targets a finger does.
+        self.assertNotIn('@media', floor)
+        for control in ('.icon-button', '.dialog-close', '.composer-plus', '.voice-talk', '.send-button'):
+            self.assertIn(control, floor)
+        self.assertIn('min-width: 44px;', floor)
+        self.assertIn('min-height: 44px;', floor)
+        # The composer textarea is the named exception: docs/console-pieces.md section 2 keeps
+        # its box free of padding and border so scrollHeight is the text's height, and the
+        # eight-line cap reads that. A floor on this box makes the cap wrong.
+        self.assertNotIn('#message-input', floor)
+        self.assertNotIn('textarea', floor)
+
     def test_only_three_plates_and_one_character_ship(self):
         plates = list((CONSOLE / 'assets' / 'backgrounds').glob('*.webp'))
         self.assertEqual(len(plates), 6)
