@@ -757,3 +757,137 @@ Remaining limits: a Tiiny is attached over USB and `lite.device.find_base()` fou
 its USB address, but it answers `401 auth_failed` without a key and this audit had no access to
 one. So no device inference, no device speech to text, no device text to speech and no model
 lifecycle call was exercised against real firmware. Every model number above is the echo model.
+
+## Step 7c
+
+Version: **0.1.12**, unchanged. The brief asked for a bump; the orchestrator held it back so the
+release and the farm manifest move together, and this section records that as a deviation.
+
+`python3 -m unittest` before the changes: **105 tests, 105 passed, 0 skipped**, exit 0, 26.6 s.
+After: **122 tests, 122 passed, 0 skipped**, exit 0, 28.9 s. `python3 -m compileall -q lite tests`
+and `git diff --check` passed. Everything below was measured on this Mac on 2026-09-13, in the
+worktree at `lite-step-7c`.
+
+### 1. The install path is live, and there are two of them
+
+Both ship, and the README now has one install section rather than a ten-minute walkthrough at the
+top and a hedged farm appendix at the bottom.
+
+The farm is the first way in. `scripts/release.py` already built the archive the catalog installs,
+so nothing in it changed; what was missing was the published release, the checksum in the manifest
+and a README that did not say "once the farm release is published". The whole path was run here
+against a local catalog holding the real archive: `install` printed `Installed titanium-tiiny-bot
+0.1.12`, `start` on a spare port printed a pid, `status` printed `running 0.1.12`, and
+`GET /api/health` answered `{"app": "titanium-bot-lite", "version": "0.1.12"}`. The archive is
+`dist/titanium-tiiny-bot-0.1.12.tar.gz`, 444,971 bytes, SHA-256
+`36e2873244f7282f3438027149392699cf7eed48298187ea566d58fe089fc3e8`.
+
+`pip install titanium-bot-lite`, which SPEC.md step 6 has promised since the start, is now real.
+`pyproject.toml` packages `lite/` with the console, the seeds, `tools.json` and `VERSION`, keeps
+`lite/VERSION` as the single source of the version through setuptools' dynamic field, and installs
+one console script, `titanbot-lite`. The name is deliberate: `tiiny` belongs to the official CLI
+and the unrelated `tiiny-sdk` package, which `docs/tiiny-platform.md` section 3 calls a trap.
+`brand/` rides in the source distribution, where the farm archive also carries it, and stays out of
+the wheel rather than installing a top-level `brand` package beside the app.
+
+Measured, with no PyPI involved at any point: the wheel and the source archive were built with
+setuptools' own build backend, then installed into two fresh virtual environments with
+`pip install --no-index <path>`. `titanbot-lite --version` printed `0.1.12` from both. The
+wheel-installed copy passed `--selfcheck` at **41.77 MB** RSS, **23.82 KB** of door resources and
+**1,970.34 ms** cold start, then served the door, the stylesheet and `/api/library` over HTTP.
+Every one of the 55 files under `lite/` on disk is present in the wheel.
+
+`farm update titanium-tiiny-bot` keeping data is now tested rather than described.
+`tests/test_install_paths.py` builds the real release archive, installs it through the real farm
+into a temporary home, writes a `keys.json` and a transcript into the app's data directory, then
+updates to a higher version and asserts both files survive byte for byte while `current` moves. Two
+more cases cover the refusal to downgrade and the installer's checksum refusal. The farm is a
+separate project, so these skip where no checkout is present; set `FARM_REPO` to run them, and they
+found `../tiinyapp-farm` here.
+
+### 2. The optional MCP connector
+
+`lite/mcp.py` answers JSON-RPC 2.0 on `POST /mcp`, which is the plain half of MCP's streamable HTTP
+transport, and `GET /api/mcp` prints the address a person pastes into TiinyOS Settings > Connectors.
+Three tools, all read only: `titan_memories` with an optional filter, `titan_skills`, and
+`titan_skill` for one skill in full. `docs/tiiny-platform.md` section 8 asked for exactly this shape,
+a connector that runs on the computer rather than on the device.
+
+Nothing it offers can write. A test walks every file in the data directory before and after calling
+all three tools and compares paths and modification times, and reads `lite/mcp.py` for any writing
+call. The cross-origin rule every writing route already used now covers this one, so a web page in
+the owner's browser cannot read their memories; a connector, which sends no `Origin`, still can. A
+new `mcp` field in `config.json` defaults to true, and `--no-mcp` closes the door from the command
+line.
+
+Driven live with curl on a spare port: `initialize` returned protocol `2025-06-18` and
+`{"name": "titanium-tiiny-bot", "version": "0.1.12"}`, `notifications/initialized` returned 202 with
+no body, `tools/list` returned the three tools, and `tools/call` on `titan_skills` returned the four
+seeded handbook packs.
+
+**What this does not prove.** No connector was registered against real firmware. The audit said the
+same and the reason has not changed: the device answers `401 auth_failed` without a key, and the only
+key on this machine is in a file this work is not permitted to open. The field names TiinyOS expects
+in a connector import are not published either, so `descriptor()` returns the address and the
+transport, which are the parts that matter, rather than a schema nobody has written down.
+
+### 3. The 44 px sweep
+
+Swept in headless WebKit through playwright-core, door and console, every visible button, link,
+input, select and textarea, at both device sizes. The sweep is the test, not a selector list, which
+is what `docs/console-pieces.md` section 3 asks for.
+
+| Size | Visible controls | Under 44x44 before | Under 44x44 after |
+| --- | --- | --- | --- |
+| 1440x900 | 15 | 7 | 2 |
+| 390x844 | 11 | 1 | 1 |
+
+The five that moved were all on the desktop: `room-menu` 29x29, `composer-plus` 38x38,
+`shelf-settings` 38x38, `voice-talk` 73.8x37.94 and `send-button` 94.17x42. One rule outside any
+media query now floors `.icon-button`, `.dialog-close`, `.composer-plus`, `.voice-talk` and
+`.send-button` at 44 by 44, which is the rule the phone block under 940 px already carried, applied
+at every width.
+
+Two are left under on purpose, and both are named in the stylesheet.
+
+The composer textarea, 1,060.03x20 at 1440x900, is the one the brief said to leave alone. Its box
+has no padding and no border so `scrollHeight` is the text's own height, and the eight-line cap
+reads that. Measured after the change: an empty box is 20 high and twenty lines of text stop at
+160, which is eight lines of 20; on the phone 44 and 176, which is eight lines of 22. A unit test
+now fails if `#message-input` or `textarea` appears in the floor rule.
+
+The "Built for Tiiny" link in the window bar, 110.95x26 at both sizes, is a brand lockup rather
+than a control, and the sweep does not count it. SPEC.md's brand section fixes its logo at 16 px in
+the console header, and the bar is a fixed 68 px grid row over a 42 px identity strip, so a 44 px
+pill pushes the bar open. The same link on the door, where it is the destination rather than a mark,
+already measures 139.55x44.
+
+Nothing else moved on the phone, which is the device this console is used from: window bar 390x103,
+shelf 390x82, composer 358x56, stage 390x658.98 and conversation space 374x652.98 are identical
+before and after. On the desktop two rects grew, both downstream of the new floor rather than of a
+layout edit: the composer 1296x54 to 1290x56, and the room capsule 227x54.25 to 242x62, which is
+`room-menu` going from 29 to 44. The window bar held at 1440x68 and the shelf at 1392x94, which are
+the two places this console has regressed before.
+
+### Changed files
+
+- `pyproject.toml`, `MANIFEST.in`: new, the pip package.
+- `README.md`: one install section covering the farm, pip and a checkout; the connector; the `mcp`
+  config row; the hedge removed; a note that the pip package builds from the same tree.
+- `lite/mcp.py`: new, the read-only connector.
+- `lite/server.py`: the `mcp` config field with its `--no-mcp` switch, `App.skill_markdown`, and the
+  `/mcp` and `/api/mcp` routes.
+- `lite/console/styles.css`: the 44 px floor and the two named exceptions.
+- `tests/test_install_paths.py`, `tests/test_mcp.py`: new, 16 tests.
+- `tests/test_config.py`: the precedence case carries the new field and the new switch.
+- `tests/test_console.py`: the floor rule and its exceptions.
+- `.gitignore`: build artifacts.
+- `docs/REPORT.md`: this section.
+
+### Remaining limits
+
+No device inference, speech or model lifecycle was exercised, for the reason the audit gave. The
+MCP connector has never been imported into TiinyOS. The published release and the farm manifest are
+the orchestrator's to move; until both land, `farm install titanium-tiiny-bot` still fetches the
+0.1.11 archive the catalog names today, and `pip install titanium-bot-lite` needs the package
+uploaded before the README's second way in works from a stranger's terminal.
