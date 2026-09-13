@@ -35,7 +35,7 @@ from .routines import Scheduler, read_routines
 
 CONSOLE = Path(__file__).parent / "console"
 TOOLS = json.loads((Path(__file__).parent / "tools.json").read_text())
-BASE_PROMPT = "You are Titan, the local assistant in Titanium Bot Lite. Speak in plain words."
+BASE_PROMPT = "You are Titan, the local assistant in Titanium Tiiny Bot. Speak in plain words."
 SEEDS = Path(__file__).parent / "seeds"
 PERSONA = (SEEDS / "persona.md").read_text()
 HANDBOOK = (SEEDS / "handbook-what-i-can-do/SKILL.md").read_text().split("---", 2)[2].strip()
@@ -238,7 +238,7 @@ class Device:
         # are holding.
         self.lane = OneLane(host=parsed.hostname, key=key,
                             port=parsed.port or (443 if parsed.scheme == "https" else 80),
-                            owner="Titanium Bot Lite", settle_s=0)
+                            owner="Titanium Tiiny Bot", settle_s=0)
         self.busy_budget = 90.0
         self.log = logging.Logger("lite", logging.DEBUG if os.getenv("LITE_DEBUG") == "1" else logging.WARNING)
         handler = logging.FileHandler(root / "lite.log", encoding="utf-8", delay=True)
@@ -1199,7 +1199,7 @@ class Handler(BaseHTTPRequestHandler):
             if target.is_relative_to(CONSOLE.resolve()) and target.is_file():
                 return self.respond(target.read_bytes(), content_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream")
             if path == "/" and not CONSOLE.exists():
-                return self.respond(b'<!doctype html><title>Titanium Bot Lite</title><h1>Titanium Bot Lite</h1><p>The server is ready. The console is the next checkpoint.</p>', content_type="text/html")
+                return self.respond(b'<!doctype html><title>Titanium Tiiny Bot</title><h1>Titanium Tiiny Bot</h1><p>The server is ready. The console is the next checkpoint.</p>', content_type="text/html")
         raise Refusal("That page was not found.", 404)
 
 
@@ -1285,7 +1285,7 @@ def stop_running(root):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Titanium Bot Lite")
+    parser = argparse.ArgumentParser(description="Titanium Tiiny Bot")
     parser.add_argument("--bind", "--host", dest="bind")
     parser.add_argument("--port", type=int)
     for field in ("base", "model", "key", "name"):
@@ -1363,7 +1363,7 @@ def run_cli(args, root, overrides, config):
         else:
             print("Cannot bind the server; check --bind and --port or config.json.", file=sys.stderr)
         raise SystemExit(1) from None
-    print(f"Titanium Bot Lite is ready at http://localhost:{server.server_port}. Budget: {json.dumps(app.budget())}", flush=True)
+    print(f"Titanium Tiiny Bot is ready at http://localhost:{server.server_port}. Budget: {json.dumps(app.budget())}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

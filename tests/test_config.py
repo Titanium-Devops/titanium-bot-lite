@@ -93,6 +93,16 @@ class ConfigTests(unittest.TestCase):
             code, out, err = self.cli('--port', '8123', '--model', 'echo')
         self.assertEqual((code, out, err), (0, 'Titanium Tiiny Bot is already running at http://localhost:8123\n', ''))
 
+    def test_one_product_name_in_everything_a_person_reads(self):
+        # The startup line said "Titanium Bot Lite is ready" while --stop and the already-running
+        # line said "Titanium Tiiny Bot", and the model's own base prompt said a third thing. The
+        # package and the health identity stay titanium-bot-lite; those are identifiers, not copy.
+        source = (Path(__file__).resolve().parents[1] / 'lite' / 'server.py').read_text()
+        self.assertNotIn('Titanium Bot Lite', source)
+        self.assertIn('Titanium Tiiny Bot is ready at', source)
+        self.assertIn('the local assistant in Titanium Tiiny Bot', source)
+        self.assertEqual(source.count('titanium-bot-lite'), 3)
+
     def test_loopback_listener_refuses_before_binding(self):
         for host in ('127.0.0.1', '::1'):
             with self.subTest(host=host):

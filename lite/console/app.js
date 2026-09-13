@@ -657,7 +657,21 @@
     else openLibrary(name).catch(error=>showToast(error.message));
   }));
   document.addEventListener('click',event=>{const decision=event.target.closest('[data-decide]');if(decision)adapter.decideApproval(activeContext(),decision.dataset.messageId,decision.dataset.decide).catch(error=>showToast(error.message));if(event.target.closest('[data-load-older]')) adapter.loadOlderMessages(activeContext()).catch(error=>showToast(error.message));});
-  document.getElementById('voice-talk').addEventListener('click',()=>showToast('Voice is not connected yet. Keep using the message box for now.'));
+  // Every file row on this page lands on the one viewer: the Files panel's memories and skills, and
+  // the Open button on an attachment in a bubble. The markup for both carried data-attachment-open
+  // and nothing read it, so pressing either did nothing at all and files-viewer.js sat loaded and
+  // unreachable. One delegated listener, because the rows are drawn into two different hosts.
+  document.addEventListener('click',event=>{
+    const row=event.target.closest?.('[data-attachment-open]');if(!row)return;
+    event.preventDefault();
+    const viewer=window.__filesViewer;
+    if(!viewer||typeof viewer.open!=='function')return showToast('The file viewer is not loaded.');
+    viewer.open({path:row.dataset.attachmentOpen,name:row.dataset.attachmentName,agentId:row.dataset.attachmentAgent||null});
+  });
+  // The Talk button belongs to voice.js, which wires it in its own boot(). app.js used to stand in
+  // front of it with a toast saying voice was not connected, written when step 5 had not landed. It
+  // has: the button, the call screen and the device's own speech are all here, so nothing here
+  // intercepts the press.
   async function openLibrary(kind){
     const library=await adapter.getLibrary();
     if(kind==='files') {

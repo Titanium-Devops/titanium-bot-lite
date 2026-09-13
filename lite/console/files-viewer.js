@@ -245,7 +245,11 @@
     if (!path) return;
     const name = file?.name || path.split("/").pop() || "file";
     const entry = { path, name, agentId: file?.agentId ?? null, from: file?.from ?? "" };
-    const kind = kindFor(name);
+    // The kind is a property of the file, so it is read off the PATH rather than the label. A label
+    // a panel chose carries no extension -- a skill is filed under its frontmatter name and lives in
+    // SKILL.md, a memory is filed under its first words -- and reading the kind off that turned every
+    // one of them into a download offer instead of the markdown a person came to read.
+    const kind = kindFor(path);
     const seq = ++generation;
     openPanel("File", name, viewerShellMarkup(entry));
 
