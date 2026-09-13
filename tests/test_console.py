@@ -125,6 +125,16 @@ class ConsoleContractTests(unittest.TestCase):
         loader = (CONSOLE / 'door.js').read_text()
         self.assertLess(loader.index("script('bg-boot.js')"), loader.index("'styles.css'"))
 
+    def test_talking_is_loaded_and_app_does_not_stand_in_front_of_it(self):
+        loader = (CONSOLE / 'door.js').read_text()
+        for name in ('voice.js', 'voice-call-avatar.js'):
+            with self.subTest(file=name):
+                self.assertIn(f"'{name}'", loader)
+                self.assertLess(loader.index(f"'{name}'"), loader.index("'app.js'"))
+        app = (CONSOLE / 'app.js').read_text()
+        self.assertNotIn('Voice is not connected yet', app)
+        self.assertNotIn("getElementById('voice-talk').addEventListener", app)
+
     def test_dropped_modules_are_absent(self):
         for name in ('gateway-adapter.js', 'adapter.js', 'marketplace-bots.js', 'marketplace',
                      'screen-tile.js', 'cloud-browser.js', 'code-tasks.js', 'gap-badge.js',

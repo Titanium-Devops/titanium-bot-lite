@@ -657,7 +657,10 @@
     else openLibrary(name).catch(error=>showToast(error.message));
   }));
   document.addEventListener('click',event=>{const decision=event.target.closest('[data-decide]');if(decision)adapter.decideApproval(activeContext(),decision.dataset.messageId,decision.dataset.decide).catch(error=>showToast(error.message));if(event.target.closest('[data-load-older]')) adapter.loadOlderMessages(activeContext()).catch(error=>showToast(error.message));});
-  document.getElementById('voice-talk').addEventListener('click',()=>showToast('Voice is not connected yet. Keep using the message box for now.'));
+  // The Talk button belongs to voice.js, which wires it in its own boot(). app.js used to stand in
+  // front of it with a toast saying voice was not connected, written when step 5 had not landed. It
+  // has: the button, the call screen and the device's own speech are all here, so nothing here
+  // intercepts the press.
   async function openLibrary(kind){
     const library=await adapter.getLibrary();
     if(kind==='files') {
