@@ -4,7 +4,6 @@ import re
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 
@@ -36,24 +35,11 @@ class Voice:
         mode = self.app.settings['voice'].get('mode', 'off')
         return dict(enabled=mode != 'off', mode=mode, asrModel=asr, ttsModel=tts)
 
-    def request(self, path, data, content_type='application/json', lifecycle=False):
+    def request(self, path, data, content_type='application/json'):
         from .server import Refusal
         device = self.app.device
-        headers = {'Authorization': 'Bearer ' + device.key, 'Content-Type': content_type}
+        headers = dict(device.headers(), **{'Content-Type': content_type})
         url = device.base + path
-        if lifecycle:
-            # Model start and stop are management routes, so they hang off the
-            # device root rather than the /v1 model base.
-            parsed = urllib.parse.urlsplit(device.base)
-            url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, '', ''))
-            # On 1.0 firmware every service shares port 80 and nginx picks one out
-            # of the Host header, so name the one we want. On older firmware the
-            # gateway has a port of its own and the header means nothing there, so
-            # sending it pointed these calls at the wrong service. It also used to
-            # be sent with the vhost default base, which resolved to the TiinyOS
-            # proxy and answered 502.
-            if parsed.port in (None, 80):
-                headers['Host'] = 'p8800.api.tiiny'
         try:
             with device.lane.hold(why='Titan voice', wait=90):
                 with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=120) as response:
@@ -66,10 +52,6 @@ class Voice:
         except (urllib.error.URLError, OSError, TimeoutError):
             raise Refusal('The device could not finish the speech request. Please try again.', 503) from None
 
-    def lifecycle(self, model, action):
-        return self.request('/api/v1/models/' + urllib.parse.quote(model, safe='') + '/' + action,
-                            b'{}', lifecycle=True)
-
     def expire(self, now=None):
         now = time.time() if now is None else now
         for path in self.folder.glob('*.wav'):
@@ -77,14 +59,14 @@ class Voice:
                 path.unlink(missing_ok=True)
         with self.lock:
             if self.loaded and not self.busy and now - self.last_used >= 300:
-                self.lifecycle(self.loaded, 'stop')
+                self.app.device.lifecycle(self.loaded, 'stop')
                 self.loaded = None
 
     def close(self):
         with self.lock:
             if self.loaded and not self.busy:
                 try:
-                    self.lifecycle(self.loaded, 'stop')
+                    self.app.device.lifecycle(self.loaded, 'stop')
                     self.loaded = None
                 except Exception:
                     self.app.device.log.exception('Voice model release failed')
@@ -144,9 +126,9 @@ class Voice:
             with self.lock:
                 if self.loaded != tts:
                     if self.loaded:
-                        self.lifecycle(self.loaded, 'stop')
+                        self.app.device.lifecycle(self.loaded, 'stop')
                         self.loaded = None
-                    self.lifecycle(tts, 'start')
+                    self.app.device.lifecycle(tts, 'start')
                     self.loaded = tts
                     self.tts_model = tts
             wav = self.request('/audio/speech', json.dumps(dict(model=tts, input=said)).encode())

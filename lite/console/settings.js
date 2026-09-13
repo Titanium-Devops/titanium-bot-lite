@@ -30,16 +30,75 @@
   function about(){
     return group('about','Titanium Tiiny Bot',`<a class="lite-attribution" href="https://titanium.bot" target="_blank" rel="noopener"><img src="brand/ti-mark.svg" alt="Ti">Brought to you by Titanium Bot</a><a class="built-for" href="https://tiiny.ai" target="_blank" rel="noopener">Built for <img src="brand/tiiny-logo.svg" height="20" alt="Tiiny"></a>`+row('Full Titanium Bot','Mail, a browser, a crew and a computer.','<span>That is part of the full Titanium Bot, not this device.</span>')+row('Version','The version running on this device.',`<span>${esc(facts.version)}</span>`)+(facts.budget?row('Measured budget','Memory, first page and start time.',`<span>${esc(facts.budget.rssMb)} MB · ${esc(facts.budget.firstPaintKb)} KB · ${esc(facts.budget.coldStartMs)} ms</span>`):''));
   }
+  // Where the turns are going, in words a person reads rather than a source name.
+  const SOURCE_WORDS={device:'Your Tiiny',lan:'Another computer on your network',cloud:'A cloud model'};
+  const modelButton=(action,label,extra='')=>`<button class="ghost-button model-button" type="button" data-model-action="${esc(action)}"${extra}>${esc(label)}</button>`;
+  function deviceRows(models){
+    if(!models.length)return '<p class="settings-note">Your device listed no models.</p>';
+    return models.map(entry=>row(entry.name,entry.running?'Running now':'Not running',
+      modelButton(entry.running?'stop':'start',entry.running?'Stop':'Start',` data-model-id="${esc(entry.id)}"`))).join('');
+  }
+  function endpointRows(saved,live){
+    if(!saved.length)return '<p class="settings-note">No other computer is saved yet.</p>';
+    return saved.map(entry=>{
+      const inUse=live.endpoint===entry.baseUrl;
+      const marks=` data-base-url="${esc(entry.baseUrl)}" data-model="${esc(entry.model)}"`;
+      return row(entry.baseUrl,entry.model+(entry.hasKey?' · key saved':' · no key'),
+        (inUse?'<span>In use</span>':modelButton('use-endpoint','Use',marks))+modelButton('forget-endpoint','Remove',marks));
+    }).join('');
+  }
+  function fillModel(host,models){
+    const live=models.live||{};
+    host.querySelector('[data-live-source]').textContent=(SOURCE_WORDS[live.source]||'Your Tiiny')+' · '+(live.model||'no model yet');
+    host.querySelector('[data-resolved-model]').textContent=live.resolvedModel||'Not yet available';
+    host.querySelector('#device-models').insertAdjacentHTML('beforeend',(models.device||[]).filter(entry=>entry.id!=='default').map(entry=>`<option value="${esc(entry.id)}">${esc(entry.name)}</option>`).join(''));
+    host.querySelector('[data-device-models]').innerHTML=deviceRows(models.device||[])+(models.note?`<p class="settings-note">${esc(models.note)}</p>`:'');
+    host.querySelector('[data-endpoint-list]').innerHTML=endpointRows(models.lan||[],live);
+  }
   async function model(host,ticket){
-    host.innerHTML=group('model','Your device',row('API address','The OpenAI address shown in TiinyOS.',input('base',facts.base,'API address'))+row('Model','Use default for the first chat model your device lists.',`<input type="text" data-setting="model" aria-label="Model" value="${esc(facts.model)}" list="device-models"><datalist id="device-models"><option value="default">First chat model</option></datalist>`)+row('Resolved model','The chat model Titan will use.',`<span data-resolved-model>${esc(facts.resolvedModel||'Not yet available')}</span>`)+row('Model controls','Start and stop models in your device settings.','<span>On your device</span>'))
+    host.innerHTML=group('model','Your device',row('In use','Where Titan sends the next message.','<span data-live-source>Reading…</span>')+row('API address','The OpenAI address shown in TiinyOS.',input('base',facts.base,'API address'))+row('Model','Use default for the first chat model your device lists.',`<input type="text" data-setting="model" aria-label="Model" value="${esc(facts.model)}" list="device-models"><datalist id="device-models"><option value="default">First chat model</option></datalist>`)+row('Resolved model','The chat model Titan will use.',`<span data-resolved-model>${esc(facts.resolvedModel||'Not yet available')}</span>`))
+      +group('devicemodels','Models on your device','<div data-device-models><p class="settings-note">Reading your device…</p></div>')
       +group('preferences','Your preferences',row('Ask me before…','Things Titan should ask you about first.',input('askBefore',facts.askBefore,'Ask me before',true)))
-      +group('connections','Other computers','<p>Connecting another computer or a cloud model is not available yet.</p>');
+      // The key box is the only place a credential is ever typed. It starts empty
+      // every time and is never filled from the server, because the server does
+      // not send it: the saved key stays in keys.json and never reaches this page.
+      +group('connections','Another computer or a cloud model',row('Address','An address that speaks the OpenAI API, ending in /v1.','<input type="text" data-endpoint-base aria-label="Address" placeholder="http://192.168.1.20:11434/v1" value="">')+row('Model','The model name that computer serves.','<input type="text" data-endpoint-model aria-label="Model name" value="">')+row('Key','Type it here and nowhere else. Leave it empty for a computer that needs none, or to keep the key already saved.','<input type="password" data-endpoint-key aria-label="Key" autocomplete="off" value="">')+row('Save and use','Your next message goes there. A message already being answered finishes where it started.',modelButton('save-endpoint','Save and use'))+'<div data-endpoint-list></div>'+row('Use this device','Send messages back to your Tiiny.',modelButton('use-device','Use this device')));
     try {
       const models=await adapter().getModels();if(ticket!==generation)return;
-      host.querySelector('[data-resolved-model]').textContent=models.live?.resolvedModel||'Not yet available';
-      host.querySelector('#device-models').insertAdjacentHTML('beforeend',models.device.filter(m=>m.id!=='default').map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join(''));
+      fillModel(host,models);
     }catch(error){
-      if(ticket===generation){const status=document.querySelector('[data-settings-status]');if(status)status.textContent='Device models are unavailable. You can still edit the API address and model.';}
+      if(ticket!==generation)return;
+      host.querySelector('[data-device-models]').innerHTML='<p class="settings-note">Your device is not answering, so its models cannot be listed.</p>';
+      const status=document.querySelector('[data-settings-status]');if(status)status.textContent='Device models are unavailable. You can still edit the API address and model.';
+    }
+  }
+  async function modelPress(button){
+    const status=document.querySelector('[data-settings-status]');
+    const host=button.closest('[data-settings-section]');
+    const name=button.dataset.modelAction;
+    let body={action:name,id:button.dataset.modelId};
+    if(name==='save-endpoint'){
+      const key=host.querySelector('[data-endpoint-key]').value;
+      body={action:'use',baseUrl:host.querySelector('[data-endpoint-base]').value.trim(),model:host.querySelector('[data-endpoint-model]').value.trim()};
+      if(key)body.apiKey=key;
+    }else if(name==='use-device')body={action:'use',source:'device'};
+    else if(name==='use-endpoint')body={action:'use',baseUrl:button.dataset.baseUrl,model:button.dataset.model};
+    else if(name==='forget-endpoint')body={action:'forget',baseUrl:button.dataset.baseUrl};
+    button.disabled=true;
+    if(status)status.textContent='Working…';
+    try{
+      const answer=await adapter().setModel(body);
+      facts=await adapter().getSettings();
+      // A saved address that did not take is TIINY_BASE or a command-line setting
+      // winning, which is the documented order. Saying "Saved" and leaving the
+      // page pointing somewhere else is the one answer a person cannot act on.
+      const live=answer?.live||{};
+      const asked=body.baseUrl?live.endpoint===body.baseUrl:body.source!=='device'||live.source==='device';
+      if(status)status.textContent=asked?'Saved':'Saved, but TIINY_BASE or a command-line setting still sends messages somewhere else.';
+      await model(host,generation);
+    }catch(error){
+      button.disabled=false;
+      if(status)status.textContent=error.message;else ui().showToast(error.message);
     }
   }
   // A browser names a microphone only after it has been allowed to hear one, so before that every
@@ -90,6 +149,7 @@
     view.fill?.(body);
   }
   document.addEventListener('click',event=>{const button=event.target.closest?.('[data-settings-nav]');if(button)open(button.dataset.settingsNav);});
+  document.addEventListener('click',event=>{const button=event.target.closest?.('[data-model-action]');if(button&&!button.disabled)modelPress(button);});
   document.addEventListener('change',async event=>{
     const field=event.target;if(!field.matches?.('[data-setting]'))return;
     const status=document.querySelector('[data-settings-status]');field.disabled=true;

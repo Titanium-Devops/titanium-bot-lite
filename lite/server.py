@@ -9,6 +9,7 @@ import copy
 import errno
 import sys
 import hashlib
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -64,13 +65,82 @@ def atomic_write(path: Path, content: str, mode=0o644):
         temporary.unlink(missing_ok=True)
 
 
+def normal_base(value):
+    """One spelling for an endpoint, so two spellings are not two endpoints."""
+    return (value or "").strip().rstrip("/")
+
+
+def model_rows(payload):
+    """The model rows, out of whichever envelope the device wrapped them in."""
+    rows = payload if isinstance(payload, list) else []
+    if isinstance(payload, dict):
+        rows = next((payload[key] for key in ("data", "models", "items")
+                     if isinstance(payload.get(key), list)), [])
+    return [row for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]]
+
+
+def device_words(payload, fallback):
+    """The device's own sentence for a refusal, rather than one we invented.
+
+    A box that will not start a model knows why and we do not, so its words are
+    the ones the owner reads. A one-word answer like `auth_failed` is a code and
+    not a sentence, so it is quoted after ours rather than shown on its own: the
+    device's exact word is kept, and the owner is still told what to do.
+    """
+    if isinstance(payload, dict):
+        for field in ("message", "msg", "detail", "error", "reason"):
+            value = payload.get(field)
+            if isinstance(value, str) and value.strip():
+                words = " ".join(value.split())[:300]
+                return words if " " in words else fallback + " The device said: " + words + "."
+    return fallback
+
+
+def endpoint_kind(base):
+    """Whether an address is on this network or out on the internet.
+
+    Nothing is resolved here. This is a label on a settings page, and a name
+    lookup on every read of the model list is not worth a label. A literal
+    address is read as one, and a name counts as local when it has no dots or
+    ends in .local, which is what a name on a home network looks like.
+    """
+    host = (urllib.parse.urlsplit(normal_base(base)).hostname or "").strip("[]")
+    try:
+        return "cloud" if ipaddress.ip_address(host).is_global else "lan"
+    except ValueError:
+        return "lan" if "." not in host or host.endswith(".local") else "cloud"
+
+
+def read_endpoints(value):
+    """The saved other-computer endpoints, dropping anything malformed.
+
+    Addresses are the owner's own typing, kept in config.json where they can
+    read them. Their keys are not here: those live in keys.json at 0600.
+    """
+    result = []
+    for row in value if isinstance(value, list) else []:
+        if not isinstance(row, dict):
+            continue
+        base, model = normal_base(row.get("baseUrl")), str(row.get("model") or "").strip()
+        parsed = urllib.parse.urlsplit(base)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            continue
+        if not model or len(base) > 300 or len(model) > 200:
+            continue
+        if any(existing["baseUrl"] == base for existing in result):
+            continue
+        result.append(dict(baseUrl=base, model=model))
+    return result[:20]
+
+
 # An empty base means "find the device". It is deliberately not an address: a
 # Tiiny's address is a DHCP lease, so writing today's address into config.json is
 # how this stops working next week. The old default was http://openai.api.tiiny/v1,
 # a name the TiinyOS desktop app puts in /etc/resolver, so it resolved on one Mac
 # and nowhere on Linux, which this bot also runs on.
 DEFAULTS = dict(base="", model="default", port=7788,
-                bind="0.0.0.0", name="Titan", mcp=True)
+                bind="0.0.0.0", name="Titan", endpoints=[], mcp=True)
 
 
 def load_config(root, overrides=None):
@@ -81,8 +151,9 @@ def load_config(root, overrides=None):
         atomic_write(path, json.dumps(DEFAULTS, indent=2) + "\n")
     saved = json.loads(path.read_text())
     if not isinstance(saved, dict) or set(saved) - DEFAULTS.keys():
-        raise Refusal("Use only base, model, port, bind, name and mcp in config.json; keep the key in keys.json.")
+        raise Refusal("Use only base, model, port, bind, name, endpoints and mcp in config.json; keep the key in keys.json.")
     values = DEFAULTS | saved
+    values["endpoints"] = read_endpoints(values.get("endpoints"))
     keys = root / "keys.json"
     if not keys.exists():
         atomic_write(keys, "{}\n", 0o600)
@@ -90,7 +161,10 @@ def load_config(root, overrides=None):
     stored = json.loads(keys.read_text())
     if not isinstance(stored, dict):
         raise Refusal("Use an object with an apiKey field in keys.json.")
+    endpoint_keys = stored.get("endpoints")
+    endpoint_keys = endpoint_keys if isinstance(endpoint_keys, dict) else {}
     values["key"] = stored.get("apiKey", "")
+    given_key = "TIINY_KEY" in os.environ or (overrides or {}).get("key") is not None
     for field in ("base", "model", "key", "port"):
         if "TIINY_" + field.upper() in os.environ:
             values[field] = os.environ["TIINY_" + field.upper()]
@@ -103,6 +177,12 @@ def load_config(root, overrides=None):
                 "No Tiiny found. Looked at TIINY_BASE, ~/.tiinyapps/device.json, "
                 "the USB links and this machine's own network. Set --base or "
                 "TIINY_BASE to the device's address.")
+    # A saved other computer carries its own key and only its own. The device's
+    # key is never handed to somebody else's machine, and it survives the trip
+    # there and back, which is what makes one press to return to the device safe.
+    chosen = normal_base(values["base"])
+    if not given_key and any(row["baseUrl"] == chosen for row in values["endpoints"]):
+        values["key"] = endpoint_keys.get(chosen, "")
     try:
         values["port"] = int(values["port"])
         if not 1 <= values["port"] <= 65535:
@@ -357,7 +437,7 @@ def build_prompt(root, text="", name=None, recall=None):
                           f"Local time: {datetime.now().astimezone():%Y-%m-%d %H:%M %Z}.",
                           HANDBOOK,
                           "Use run_skill to open handbook skills. Read and Write only see files/. "
-                          "Credentials currently belong in local keys.json; no masked Settings box exists yet. "
+                          "A credential belongs in the masked box in Settings > Model, never in chat. "
                           "If profile memory says setup is complete, that overrides the seed’s initial setup status. "
                           "Routines now run on five-field cron in local time. Create them disabled and tell the owner "
                           "they are switched off until the owner enables them. Only enable or resume a routine "
@@ -405,6 +485,111 @@ class Device:
         handler.setFormatter(LogFormatter(key))
         self.log.addHandler(handler)
 
+    def headers(self):
+        """A bearer only when there is one. An empty one is worse than none:
+        another computer on the network may check it and refuse a blank."""
+        values = {"Content-Type": "application/json"}
+        if self.key:
+            values["Authorization"] = "Bearer " + self.key
+        return values
+
+    def management(self, path, body=None, timeout=60):
+        """A device management route. These hang off the device root, not the
+        /v1 model base, so the base's path is dropped and its host kept.
+
+        On 1.0 firmware every service shares port 80 and nginx picks one out of
+        the Host header, so name the one we want. Older firmware gives the
+        gateway a port of its own, where the header means nothing and sending it
+        pointed these calls at the wrong service. It also used to be sent with
+        the vhost default base, which resolved to the TiinyOS proxy and answered
+        502.
+
+        Returns (status, payload). A refusal is the device's own business to
+        explain, so its body comes back rather than an exception; only an
+        unreachable box raises.
+        """
+        parsed = urllib.parse.urlsplit(self.base)
+        url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+        headers = self.headers()
+        if parsed.port in (None, 80):
+            headers["Host"] = "p8800.api.tiiny"
+        request = urllib.request.Request(url, data=body, headers=headers)
+        try:
+            with self.lane.hold(why="Titan model controls", wait=90):
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    raw = response.read(65536)
+                    kind = response.headers.get("Content-Type", "")
+                    payload = json.loads(raw) if "json" in kind and raw else {}
+                    # urlopen raises on anything but a success, so a response
+                    # reaching here is one; the code is read where one is offered.
+                    return getattr(response, "status", 200), payload if isinstance(payload, (dict, list)) else {}
+        except urllib.error.HTTPError as error:
+            # Never expose an upstream URL or headers: they carry the key.
+            try:
+                raw = error.read(65536) if error.fp else b""
+            finally:
+                error.close()
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = {}
+            return error.code, payload if isinstance(payload, dict) else {}
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+            self.log.exception("management request failed path=%s", path)
+            raise Refusal("Cannot reach the device. Check its address and that it is switched on.", 503) from None
+
+    def lifecycle(self, model, action):
+        """Start or stop one model on the device, in the device's own words.
+
+        Both the spoken turn and the Model page call this, so the lane is held
+        and the Host rule applied in one place rather than two.
+        """
+        if action not in ("start", "stop"):
+            raise Refusal("Choose start or stop.")
+        path = "/api/v1/models/" + urllib.parse.quote(model, safe="") + "/" + action
+        status, payload = self.management(path, b"{}")
+        refused = status >= 400 or (isinstance(payload, dict) and
+                                    (payload.get("error") or payload.get("code", 0) not in (0, 200)))
+        if refused:
+            words = device_words(payload, "The device would not " + action + " that model.")
+            raise Refusal(words.replace(self.key, "[redacted]") if self.key else words, 502)
+        return payload
+
+    LOADED_FLAGS = ("running", "loaded", "is_loaded", "active", "started")
+    LOADED_WORDS = ("running", "loaded", "started", "online", "ready", "active")
+
+    @staticmethod
+    def loaded_flag(row):
+        """What a model row says about being loaded, or None when it says nothing.
+
+        Which field this firmware carries it in is NOT established here. The unit
+        on this desk answers 401 auth_failed without a key and no key was
+        available, so no real row was ever read; the names below are the shapes a
+        model list uses. A row that says nothing answers None rather than False,
+        so the caller falls back to the model Lite picked instead of telling the
+        owner every model on their device is stopped.
+        """
+        for field in Device.LOADED_FLAGS:
+            if isinstance(row.get(field), bool):
+                return row[field]
+        for field in ("status", "state", "load_state"):
+            value = row.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower() in Device.LOADED_WORDS
+        return None
+
+    def loaded_ids(self, rows):
+        """Which models the device says it has loaded, or None when it does not.
+
+        Only the rows already in hand are read. Asking a second list on every
+        read of the Model page would cost a round trip, hold the device lane, and
+        rest on a shape nobody here has been able to confirm.
+        """
+        flags = [(row["id"], self.loaded_flag(row)) for row in rows]
+        if not any(flag is not None for _, flag in flags):
+            return None
+        return {ident for ident, flag in flags if flag}
+
     def request(self, path, body=None, on_token=None):
         if self.model == "echo" and path == "/models":
             return {"data": [{"id": "echo", "name": "Echo (development)"}]}
@@ -417,7 +602,7 @@ class Device:
                 with self.lane.hold(why="Titan answering" if body else "Reading available models", wait=90):
                     request = urllib.request.Request(
                         self.base + path, data=json.dumps(body).encode() if body is not None else None,
-                        headers={"Authorization": "Bearer " + self.key, "Content-Type": "application/json"})
+                        headers=self.headers())
                     self.log.debug("request sent path=%s attempt=%d", path, attempt + 1)
                     with urllib.request.urlopen(request, timeout=120) as response:
                         if on_token and "text/event-stream" in response.headers.get("Content-Type", ""):
@@ -485,6 +670,16 @@ class Device:
                     raw = error.read(65536) if error.fp else b""
                 finally:
                     error.close()
+                if error.code in (401, 403):
+                    # A key the device will not take is not weather. Calling it
+                    # busy sends the owner to look at the device when what wants
+                    # looking at is the key box, so the device's words stand.
+                    try:
+                        payload = json.loads(raw)
+                    except ValueError:
+                        payload = {}
+                    words = device_words(payload, "The device would not take this key. Check it in Settings > Model.")
+                    raise Refusal(words.replace(self.key, "[redacted]") if self.key else words, 502) from None
                 busy = error.code in (502, 503, 504) or b"150004" in raw
                 elapsed = time.monotonic() - started
                 if not busy or emitted or elapsed >= self.busy_budget:
@@ -618,9 +813,151 @@ class App:
         for handler in self.device.log.handlers:
             handler.close()
 
+    def endpoint_source(self):
+        """Which of the three the turn will go to: the device, another computer
+        on this network, or a cloud model. An address the owner never saved is
+        the device: that is where discovery and TIINY_BASE both point."""
+        base = normal_base(self.config.get("base", ""))
+        if not base or not any(row["baseUrl"] == base for row in self.config.get("endpoints", [])):
+            return "device"
+        return endpoint_kind(base)
+
     def live(self):
-        return dict(source="device", endpoint=self.device.base,
-                    model=self.device.resolved_model or self.device.model, resolvedModel=self.device.resolved_model)
+        return dict(source=self.endpoint_source(), endpoint=self.device.base,
+                    model=self.device.resolved_model or self.device.model,
+                    resolvedModel=self.device.resolved_model, hasKey=bool(self.device.key))
+
+    def endpoint_keys(self):
+        """The saved endpoint keys. This answer never leaves the process."""
+        path = self.root / "keys.json"
+        stored = json.loads(path.read_text()) if path.exists() else {}
+        saved = stored.get("endpoints") if isinstance(stored, dict) else None
+        return saved if isinstance(saved, dict) else {}
+
+    def save_endpoint_key(self, base, key):
+        """One 0600 file holds every key, and none of them reaches the page."""
+        path = self.root / "keys.json"
+        stored = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(stored, dict):
+            raise Refusal("Use an object with an apiKey field in keys.json.")
+        saved = stored.get("endpoints")
+        saved = dict(saved) if isinstance(saved, dict) else {}
+        if key:
+            saved[base] = key
+        else:
+            saved.pop(base, None)
+        stored["endpoints"] = saved
+        atomic_write(path, json.dumps(stored, indent=2) + "\n", 0o600)
+
+    def models_payload(self):
+        """Route 6. The live endpoint, the device's models, the saved computers."""
+        rows = model_rows(self.device.request("/models"))
+        try:
+            self.device.resolve_model(rows)
+        except Refusal:
+            pass  # Keep the model list available when no chat model is loaded.
+        loaded = self.device.loaded_ids(rows)
+        chosen = self.device.resolved_model
+        models = [dict(id=row["id"], name=row.get("name", row["id"]),
+                       running=(row["id"] in loaded) if loaded is not None else row["id"] == chosen)
+                  for row in rows]
+        note = ("Start and stop your device's models here."
+                if loaded is not None else
+                "Your device does not say which models it has loaded, so this marks the one Titan is set to use.")
+        keys = self.endpoint_keys()
+        lan = [dict(row, hasKey=bool(keys.get(row["baseUrl"])))
+               for row in self.config.get("endpoints", [])]
+        self.poke()
+        return dict(live=self.live(), device=models, lan=lan, note=note)
+
+    def model_action(self, body):
+        """Route 7. Start and stop a model, or choose where the turns go."""
+        action = body.get("action")
+        if action in ("start", "stop"):
+            return self.model_lifecycle(action, body.get("id"))
+        if action == "forget":
+            return self.forget_endpoint(body.get("baseUrl"))
+        if action != "use":
+            raise Refusal("Choose a supported model action.")
+        if "baseUrl" in body or "apiKey" in body:
+            return self.use_endpoint(body)
+        if body.get("source") == "device":
+            return self.use_device()
+        ident = body.get("id")
+        if not isinstance(ident, str) or not ident.strip() or len(ident) > 200:
+            raise Refusal("Choose a model first.")
+        self.save_config({"model": ident.strip()})
+        return dict(live=self.live())
+
+    def model_lifecycle(self, action, ident):
+        """The device's own model lifecycle, with one model held back.
+
+        Stopping the model Titan is answering on is refused in words here rather
+        than obeyed and discovered on the next turn, which would read to the
+        owner as the bot breaking for no reason.
+        """
+        if not isinstance(ident, str) or not ident.strip() or len(ident) > 200:
+            raise Refusal("Choose a model first.")
+        ident = ident.strip()
+        with self.lock:
+            in_use = self.device.resolved_model or (self.device.model if self.device.model != "default" else "")
+            if action == "stop" and ident == in_use:
+                raise Refusal("Titan is answering on " + ident +
+                              ". Choose another model for Titan first, then stop this one.", 409)
+        self.device.lifecycle(ident, action)
+        with self.lock:
+            if action == "stop" and ident == self.voice.loaded:
+                # It is not loaded any more, whoever stopped it. Saying so here
+                # means the next spoken turn loads it again instead of assuming.
+                self.voice.loaded = None
+            if self.device.model == "default":
+                self.device.resolved_model = None
+        self.poke()
+        try:
+            return self.models_payload()
+        except Refusal:
+            return dict(live=self.live())
+
+    def use_endpoint(self, body):
+        """Another computer on the network, or a cloud address. Same route.
+
+        The key goes to keys.json at 0600 under this address and is never echoed
+        back, never put in config.json, and never sent anywhere else.
+        """
+        base, model, key = normal_base(body.get("baseUrl")), body.get("model"), body.get("apiKey")
+        if not isinstance(body.get("baseUrl"), str) or not base or len(base) > 300:
+            raise Refusal("Enter the address of the other computer, ending in /v1.")
+        parsed = urllib.parse.urlsplit(base)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise Refusal("Use a plain HTTP or HTTPS address with no password in it.")
+        if not isinstance(model, str) or not model.strip() or len(model) > 200:
+            raise Refusal("Enter the model name that computer serves.")
+        if key is not None and (not isinstance(key, str) or len(key) > 4000):
+            raise Refusal("Enter the key as text, or leave the box empty.")
+        saved = [row for row in self.config.get("endpoints", []) if row["baseUrl"] != base]
+        saved.append(dict(baseUrl=base, model=model.strip()))
+        if isinstance(key, str):
+            self.save_endpoint_key(base, key.strip())
+        self.save_config(dict(base=base, model=model.strip(), endpoints=saved[-20:]))
+        return dict(live=self.live())
+
+    def use_device(self):
+        """Back to the Tiiny in one press. An empty address means find it, and
+        the model returns to the first chat model the device lists."""
+        self.save_config(dict(base="", model="default"))
+        return dict(live=self.live())
+
+    def forget_endpoint(self, base):
+        base = normal_base(base)
+        saved = [row for row in self.config.get("endpoints", []) if row["baseUrl"] != base]
+        if len(saved) == len(self.config.get("endpoints", [])):
+            raise Refusal("That computer is not saved.", 404)
+        self.save_endpoint_key(base, "")
+        if normal_base(self.config.get("base")) == base:
+            self.save_config(dict(base="", model="default", endpoints=saved))
+        else:
+            self.save_config(dict(endpoints=saved))
+        return dict(live=self.live())
 
     def budget(self):
         import resource
@@ -684,23 +1021,39 @@ class App:
             return self.get_settings()
 
     def save_config(self, changes):
+        # A turn already running is not stranded by this and does not block it:
+        # it finishes on the endpoint it started on, and the change lands on the
+        # next turn. Only the speech model has to be released first, and that
+        # waits on the device lane, so it happens before this takes the app lock.
+        if self.voice.busy:
+            raise Refusal("Wait for Titan to finish speaking before changing the configuration.", 409)
+        self.voice.close()
+        if self.voice.loaded:
+            raise Refusal("The device could not release its speech model. Please try again.", 503)
         with self.lock:
-            if self.active or not self.jobs.empty() or self.voice.busy:
-                raise Refusal("Wait for Titan to finish before changing the configuration.", 409)
-            self.voice.close()
-            if self.voice.loaded:
-                raise Refusal("The device could not release its speech model. Please try again.", 503)
             path = self.root / "config.json"
             saved = DEFAULTS | json.loads(path.read_text()) | changes
-            if any(not isinstance(v, str) or not v.strip() for k, v in changes.items()):
+            text = {k: v for k, v in changes.items() if k != "endpoints"}
+            # An empty base is legal and means "find the device", which is the
+            # shipped default and the way back from another computer.
+            if any(not isinstance(v, str) or (not v.strip() and k != "base") for k, v in text.items()):
                 raise Refusal("Enter a nonempty address, model and name.")
+            if "endpoints" in changes:
+                saved["endpoints"] = read_endpoints(changes["endpoints"])
             # Validate the saved address even when an environment override is
             # active. An empty base is legal and means "find the device", which is
             # the shipped default, so there is nothing to validate in that case.
             if str(saved.get("base") or "").strip():
                 Device(self.root, saved["base"], self.device.key, saved["model"])
+            previous = path.read_text()
             atomic_write(path, json.dumps(saved, indent=2) + "\n")
-            self.config = load_config(self.root, self.overrides)
+            try:
+                self.config = load_config(self.root, self.overrides)
+            except Refusal:
+                # A switch that cannot be read back leaves the running
+                # configuration where it was, rather than half moved.
+                atomic_write(path, previous)
+                raise
             self.voice.tts_model = None
             for handler in self.device.log.handlers:
                 handler.close()
@@ -802,8 +1155,11 @@ class App:
         return dict(id=uuid.uuid4().hex, authorId=author, authorName="You" if author == "you" else self.settings["botName"],
                     type=kind, text=text, time=now.strftime("%H:%M"), timestampMs=int(now.timestamp() * 1000), status="sent")
 
-    def tool_loop(self, messages, on_token, reply, transcript=None, conversation="main"):
+    def tool_loop(self, messages, on_token, reply, transcript=None, conversation="main", device=None):
         transcript = self.messages if transcript is None else transcript
+        # The endpoint this turn started on, held for its whole length so a
+        # switch in Settings cannot move a tool round to another computer.
+        device = self.device if device is None else device
         total, rounds, empty = 0, 0, 0
         created = set()
         def finish():
@@ -816,8 +1172,8 @@ class App:
                 options["thinking"] = True
             if rounds == 6:
                 options["allow_tools"] = False
-            self.device.log.debug("loop request round=%d empty=%d options=%s", rounds, empty, options)
-            usage = self.device.chat(messages, on_token, **options) or {}
+            device.log.debug("loop request round=%d empty=%d options=%s", rounds, empty, options)
+            usage = device.chat(messages, on_token, **options) or {}
             count = usage.get("total_tokens")
             total = total + int(count) if total is not None and count is not None else None
             message = usage.get("_message")
@@ -838,7 +1194,7 @@ class App:
             messages.append(dict(role="assistant", content=message.get("content"), tool_calls=calls))
             for call in calls:
                 name = call.get("function", {}).get("name", "")
-                self.device.log.debug("tool call assembled name=%s argument_length=%d", name, len(call.get("function", {}).get("arguments", "")))
+                device.log.debug("tool call assembled name=%s argument_length=%d", name, len(call.get("function", {}).get("arguments", "")))
                 try:
                     arguments = json.loads(call.get("function", {}).get("arguments", "{}"))
                     if not isinstance(arguments, dict):
@@ -851,15 +1207,15 @@ class App:
                     if name == "update_state" and arguments.get("target") == "routine" and arguments.get("action") == "create":
                         created.add(result.split()[2])
                 except Refusal as error:
-                    self.device.log.exception("tool refused name=%s", name)
+                    device.log.exception("tool refused name=%s", name)
                     result = "Refused: " + str(error)
                 except (ValueError, TypeError, KeyError, OSError):
-                    self.device.log.exception("tool exception name=%s", name)
+                    device.log.exception("tool exception name=%s", name)
                     result = "Refused: The tool arguments or file contents are invalid."
                 # Never include the configured credential in tool results or receipts.
-                if self.device.key:
-                    result = result.replace(self.device.key, "[redacted]")
-                self.device.log.debug("tool executed name=%s result_length=%d", name, len(result))
+                if device.key:
+                    result = result.replace(device.key, "[redacted]")
+                device.log.debug("tool executed name=%s result_length=%d", name, len(result))
                 messages.append(dict(role="tool", tool_call_id=call["id"], content=result))
                 with self.lock:
                     receipt = self.message("titan", name + (" refused" if result.startswith("Refused:") else " completed"), "system")
@@ -951,14 +1307,18 @@ class App:
                 return "Saved routine " + ident + (" enabled." if item["enabled"] else " switched off. The owner must enable it before it runs.")
         raise Refusal("Choose memory, profile or routine as the target.")
 
-    def extract_memories(self, user_text, reply_text):
+    def extract_memories(self, user_text, reply_text, device=None):
         """The second memory writer: one cheap call once the reply is already on screen.
 
         It holds the device lane like any other request, so nobody waits longer for
         their own answer than they did before. A failure here is a log line rather
         than a failed turn: the turn it follows is finished and saved.
+
+        It runs on the endpoint its turn started on, like the turn itself. An
+        exchange that answered on one computer is not read back by another.
         """
-        if self.device.model == "echo":
+        device = self.device if device is None else device
+        if device.model == "echo":
             # The development model reverses text. It cannot extract a fact, and a
             # second pass through it would only slow every offline turn down.
             return []
@@ -972,7 +1332,7 @@ class App:
             pass
         _, profile, recent, _ = select_memories(self.root, user_text + "\n" + reply_text)
         collected = []
-        usage = self.device.chat(
+        usage = device.chat(
             [dict(role="system", content=EXTRACTION_PROMPT),
              dict(role="user", content=extraction_exchange(user_text, reply_text,
                                                            [m["name"] for m in profile + recent]))],
@@ -980,30 +1340,31 @@ class App:
         count = usage.get("total_tokens")
         with self.lock:
             self.tokens = self.tokens + int(count) if self.tokens is not None and count is not None else None
-        return self.apply_extracted("".join(collected))
+        return self.apply_extracted("".join(collected), device)
 
-    def apply_extracted(self, raw):
+    def apply_extracted(self, raw, device=None):
         """Everything the extraction writes goes through update_state, so the cap, the
         whitespace normalisation, the dedupe and the refusal are the same code as the tool."""
+        device = self.device if device is None else device
         applied = []
         for tag, fact in parse_extracted(raw):
             if tag == "remove":
                 try:
                     applied.append(self.update_state(dict(target="memory", action="forget", fact=fact)))
                 except Refusal:
-                    self.device.log.debug("extraction removal did not match a saved fact")
+                    device.log.debug("extraction removal did not match a saved fact")
                 continue
             pieces, refused = split_fact(fact, MEMORY_CAP - (len(NOTE_PREFIX) if tag == "note" else 0))
             for piece in refused:
                 # Refused, not sliced: the owner keeps whatever else the extraction found.
-                self.device.log.warning("extracted sentence refused at %d characters", len(piece))
+                device.log.warning("extracted sentence refused at %d characters", len(piece))
             for piece in pieces:
                 try:
                     applied.append(self.update_state(dict(target="profile" if tag == "profile" else "memory",
                                                           action="write", tier=tag, fact=piece)))
                 except Refusal:
-                    self.device.log.debug("extraction write refused")
-        self.device.log.debug("extraction applied count=%d", len(applied))
+                    device.log.debug("extraction write refused")
+        device.log.debug("extraction applied count=%d", len(applied))
         return applied
 
     def release_waiter(self, job, reply=None):
@@ -1035,6 +1396,10 @@ class App:
             except queue.Empty:
                 continue
             started = time.monotonic()
+            # The endpoint this turn started on. Settings may move to another
+            # computer while this runs; that lands on the next turn, and this one
+            # finishes where it began rather than half on each.
+            device = self.device
             run = None
             reply = None
             conversation = "main"
@@ -1076,25 +1441,25 @@ class App:
                 def token(chunk):
                     with self.lock:
                         if not reply["text"]:
-                            self.device.log.debug("final text started conversation=%s", conversation)
+                            device.log.debug("final text started conversation=%s", conversation)
                         reply["text"] += chunk
                         self.poke()
                 try:
                     messages = [dict(role="system", content=build_prompt(self.root, user["text"], self.settings["botName"], self.recall.setdefault(conversation, {})))]
                     messages += [dict(role="user" if m["authorId"] == "you" else "assistant", content=m["text"] + ("\nAttached files: " + ", ".join(a["path"] for a in m["attachments"]) if m.get("attachments") else "")) for m in history]
-                    usage = self.tool_loop(messages, token, reply, transcript, conversation)
+                    usage = self.tool_loop(messages, token, reply, transcript, conversation, device)
                     with self.lock:
                         reply["type"] = "text"
                         count = (usage or {}).get("total_tokens")
                         self.tokens = self.tokens + int(count) if self.tokens is not None and count is not None else None
                 except Exception as error:
-                    self.device.log.exception("turn exception conversation=%s", conversation)
+                    device.log.exception("turn exception conversation=%s", conversation)
                     with self.lock:
                         reply["type"] = "turn-failed"
                         reply["text"] = str(error) if isinstance(error, Refusal) else "Titan could not finish this reply. Please try again."
                 with self.lock:
                     self.save_messages(transcript, conversation)
-                    self.device.log.debug("final text finished conversation=%s status=%s length=%d", conversation, reply["type"], len(reply["text"]))
+                    device.log.debug("final text finished conversation=%s status=%s length=%d", conversation, reply["type"], len(reply["text"]))
                     if run is not None and path.exists():
                         run.update(finishedAt=int(time.time() * 1000), status="error" if reply["type"] == "turn-failed" else "ok", detail=reply["text"])
                         atomic_write(runs_path, json.dumps(runs))
@@ -1103,12 +1468,12 @@ class App:
                 self.release_waiter(job, reply)
                 if conversation == "main" and reply["type"] == "text" and is_memorable(user["text"]):
                     try:
-                        self.extract_memories(user["text"], reply["text"])
+                        self.extract_memories(user["text"], reply["text"], device)
                     except Exception:
-                        self.device.log.exception("memory extraction failed conversation=%s", conversation)
+                        device.log.exception("memory extraction failed conversation=%s", conversation)
             except (OSError, ValueError, TypeError):
                 # A malformed routine file cannot kill the shared turn worker.
-                self.device.log.exception("worker exception conversation=%s", conversation)
+                device.log.exception("worker exception conversation=%s", conversation)
             finally:
                 with self.lock:
                     if isinstance(job, tuple):
@@ -1390,15 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
                 start = max(0, end - limit)
                 return self.respond(dict(messages=transcript[start:end], hasOlder=start > 0))
         if verb == "GET" and path == "/api/models":
-            payload = app.device.request("/models")
-            try:
-                app.device.resolve_model(payload.get("data", []))
-            except Refusal:
-                pass  # Keep the model list available when no chat model is loaded.
-            app.poke()
-            models = [dict(id=m["id"], name=m.get("name", m["id"]), running=m["id"] == app.device.resolved_model)
-                      for m in payload.get("data", []) if isinstance(m, dict) and isinstance(m.get("id"), str)]
-            return self.respond(dict(live=app.live(), device=models, lan=[], note="Start and stop models in the device's settings."))
+            return self.respond(app.models_payload())
         if verb in ("POST", "PATCH"):
             body, attachments = self.body()
             if verb == "POST" and path == "/api/send":
@@ -1412,17 +1769,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise Refusal("Choose approve, deny, or always.")
                 raise Refusal("There is no pending approval with that identifier.", 404)
             if verb == "POST" and path == "/api/model":
-                if body.get("action") in ("start", "stop"):
-                    raise Refusal("Start and stop models in the device's settings for now.", 501)
-                if body.get("action") != "use":
-                    raise Refusal("Choose a supported model action.")
-                if any(k in body for k in ("baseUrl", "apiKey")):
-                    raise Refusal("Other connections are not available here yet. Change the local configuration before starting Lite.", 501)
-                ident = body.get("id")
-                if not isinstance(ident, str) or not ident or len(ident) > 200:
-                    raise Refusal("Choose a model first.")
-                app.save_config({"model": ident})
-                return self.respond(dict(live=app.live()))
+                return self.respond(app.model_action(body))
         if verb == "GET" and path == "/api/file":
             requested = params.get("path", [""])[0]
             target = (app.root / requested).resolve()
@@ -1545,7 +1892,9 @@ def main():
     parser.add_argument("--selfcheck", action="store_true", help="Measure startup, memory, door bytes and one reply")
     parser.add_argument("--boot-probe", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    overrides = {k: getattr(args, k) for k in (*DEFAULTS, "key")}
+    # The saved endpoints are a list the owner builds in Settings, not a flag,
+    # so they are the one default with no command-line override.
+    overrides = {k: getattr(args, k) for k in ("base", "model", "port", "bind", "name", "mcp", "key")}
     root = Path(args.data_dir or os.getenv("TIINY_DATA_DIR", "./data")).resolve()
     if args.stop:
         try:

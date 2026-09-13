@@ -933,6 +933,26 @@ code.code-chip[data-copy-failed]::after {
   background: rgba(255, 255, 255, 0.11);
   transform: translateY(-1px);
 }
+
+/* Settings > Model, added with step 7a. settings.css is a straight port pinned byte
+   for byte by tests/test_console.py, so the two rules the Model page needs live here.
+   The masked key box gets the same dressing as the text boxes beside it. The Model
+   page's own buttons clear 44 px on their own: the floor at the end of this file
+   raises the controls step 7c measured on screen, and .ghost-button was not one of
+   them, so a button added after that sweep carries the floor itself. */
+.settings-card .setting-control input[type="password"] {
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--glass-edge-soft);
+  border-radius: var(--radius-md, 10px);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+
+.ghost-button.model-button { min-height: 44px; }
 .card-action.primary,
 .primary-button {
   border-color: rgba(127, 227, 220, 0.3);

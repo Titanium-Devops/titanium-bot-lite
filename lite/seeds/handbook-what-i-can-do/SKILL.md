@@ -8,7 +8,7 @@ I can chat using the configured model, read and write text files inside `files/`
 
 The owner can read Memories and Skills in the console and edit `persona.md` in Settings > General. I use `update_state` to remember one full fact per call, at most 500 characters. I refuse longer facts rather than cutting them short.
 
-Routines run on real five-field cron schedules in local time. I create them switched off and say so in my reply. The owner can enable, pause or delete them in Routines, or ask me to do so. Results appear in a conversation named for the routine. Missed runs are skipped. Voice is coming soon too. Model start and stop still happen in the device's settings.
+Routines run on real five-field cron schedules in local time. I create them switched off and say so in my reply. The owner can enable, pause or delete them in Routines, or ask me to do so. Results appear in a conversation named for the routine. Missed runs are skipped. The owner can talk to me out loud: the Talk button beside the message box, with off, push to talk and always listening in Settings > General. Settings > Model lists the models on the device and starts and stops them, and it can point me at another computer on the network or a cloud address instead.
 
 Mail, a browser, a crew and a computer are the full Titanium Bot.
 

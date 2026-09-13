@@ -758,6 +758,134 @@ its USB address, but it answers `401 auth_failed` without a key and this audit h
 one. So no device inference, no device speech to text, no device text to speech and no model
 lifecycle call was exercised against real firmware. Every model number above is the echo model.
 
+## Step 7a
+
+Version: **0.1.12**, unchanged. `docs/STEP-7A.md` asks for a bump; the orchestrator holds it back
+until the three step 7 branches merge, so the number is deliberately left alone here.
+
+SPEC delivery step 2 was the only numbered step with no brief and no section above. It has one now.
+`POST /api/model` no longer answers 501 to anything.
+
+Changed files:
+
+- `lite/server.py`: `Device.lifecycle` is the one implementation of model start and stop, moved off
+  `Voice` so the spoken turn and the Model page both call it rather than reaching across into
+  `app.voice`. It hangs off the device root through a new `Device.management`, holds the device
+  lane, and keeps the `Host: p8800.api.tiiny` rule for firmware that serves everything on port 80.
+  A device that refuses is repeated in its own words; a one-word code like `auth_failed` is quoted
+  inside our sentence so the owner still knows what to do. `Device.loaded_ids` reads the load state
+  off the device's own model rows and answers None when the rows do not carry one, and
+  `/api/models` then says so in `note` rather than reporting every model stopped. `App.model_action`
+  carries start, stop, use, a use that saves another computer, a use that comes back to the device,
+  and forget. Keys live in `keys.json` at 0600 under the address they belong to, so the device's key
+  is never handed to somebody else's machine and survives the trip there and back. `config.json`
+  gains `endpoints`, which holds addresses and models and never a key. `save_config` no longer
+  refuses while a turn is running: the turn keeps the endpoint it started on, held through
+  `tool_loop`, and the change lands on the next one. A configuration that cannot be read back is
+  rolled back rather than left half moved. A 401 or 403 from the device now says the key was
+  refused instead of saying the device is busy, which is the sentence a live run printed before
+  this pass.
+- `lite/voice.py`: the duplicate lifecycle request and its Host-header branch are gone; voice calls
+  `app.device.lifecycle`. An empty key no longer sends an empty bearer, which a computer on the
+  network may well refuse.
+- `lite/console/settings.js`: Settings > Model draws where the next message goes, the models on the
+  device with a Start or Stop beside each, the saved computers with Use and Remove, one masked Key
+  box, and a Use this device button. The masked box starts empty on every draw, is never filled
+  from the server, and only a typed key is sent, so an empty box keeps the saved one. A save that
+  an environment or command-line setting outranks says so rather than saying "Saved".
+- `lite/console/styles.css`: the masked box gets the dressing its neighbours have and the Model
+  page's own buttons clear 44 px. `settings.css` is a straight port pinned byte for byte by
+  `tests/test_console.py`, so the two rules live here.
+- `lite/seeds/handbook-never-ask/SKILL.md`, `lite/seeds/handbook-what-i-can-do/SKILL.md` and the
+  base prompt: there is a masked box now, so Titan stops saying there is not one and stops saying
+  voice is coming. Seeds are copied on first run only, so an existing data directory keeps the old
+  text until the owner deletes that skill folder.
+- `README.md` and `docs/console-pieces.md`: the front page no longer sends the owner to TiinyOS to
+  start a model, the config table carries `endpoints`, and routes 6 and 7 say what ships.
+- `tests/test_server.py`, `tests/test_console.py`, `tests/test_config.py`: the new coverage, and
+  `AppCase` grows an environment and a data-directory hook so a case can run without `TIINY_BASE`,
+  which outranks `config.json` and would otherwise hide every endpoint switch.
+
+Measured live on this Mac, 2026-09-13, against the Tiiny attached over USB at
+`http://172.17.7.177/v1`, serial TNYM26072400300011Q:
+
+- Lite on a spare port with no key: `GET /api/models` and `POST /api/model {"action":"start"}` both
+  reached real firmware and came back with the device's own sentence, `Missing bearer token: send
+  'Authorization: Bearer <token>' (HTTP) or 'Sec-WebSocket-Protocol: bearer, <token>' (WebSocket).`
+- The same two with a deliberately wrong key: `The device would not take this key. Check it in
+  Settings > Model. The device said: auth_failed.` and `The device would not start that model. The
+  device said: auth_failed.`
+- `curl` against the box directly, to tell a route that exists from one that does not: with a
+  bearer, `/api/v1/models/`, `/api/v1/models/<id>/start`, `/api/v1/models/<id>/stop`,
+  `/api/v1/models/unload_all` and `/api/v1/npu/status` all answer `401 {"error":"auth_failed"}`,
+  while `/definitely/not/a/route` answers `404 {"detail":"Not Found"}`. So the management routes
+  this step calls are real on this firmware, on port 80, and auth is checked before routing.
+- The endpoint switch end to end on the echo model, with `config.json` deciding: saving
+  `http://192.168.7.5:11434/v1` moved `live` to `{"source":"lan"}` at that address; saving
+  `https://api.example.com/v1` moved it to `{"source":"cloud"}`; **Use this device** put it back on
+  `http://172.17.7.177/v1` in one press. Both keys were in `keys.json` at 0600 and in nothing else:
+  not in `config.json`, not in `/api/settings`, not in `/api/models`, not in the log, not in stdout.
+- Stopping the model in use: `Titan is answering on echo. Choose another model for Titan first,
+  then stop this one.`
+- Echo selfcheck: 34.94 MB RSS, 23.82 KB of door resources, 48.2 ms cold start, all inside budget.
+
+Verification:
+
+- `python3 -m unittest` before the changes: **105 tests, 105 passed, 0 skipped**, 26.6 s, exit 0.
+- `python3 -m unittest` after: **114 tests, 114 passed, 0 skipped**, 28.5 s, exit 0.
+- `python3 -m compileall -q lite tests` passed. `git diff --check` passed. `python3 -m lite
+  --version` printed 0.1.12.
+
+Remaining limits:
+
+- **The field that carries loaded state is still unverified.** The unit answers 401 without a key
+  and no key was reachable from this worktree: `~/.tiinyapps/device.json` does not exist on this
+  Mac, `TIINY_KEY` is unset, and `tiiny auth key` answers `No Tiiny device connected`. So no real
+  model row was ever read. `Device.loaded_flag` reads a boolean `running`, `loaded`, `is_loaded`,
+  `active` or `started`, or a `status`, `state` or `load_state` word, and answers None when a row
+  carries none of them, at which point `/api/models` falls back to the model Lite picked and the
+  `note` says that is what it did. The request that would settle it is
+  `curl -H "Authorization: Bearer <key>" http://172.17.7.177/v1/models` and the same against
+  `http://172.17.7.177/api/v1/models/` with `Host: p8800.api.tiiny`: whichever row carries the
+  loaded state, and under which name, is the one line that needs changing.
+- Only the inference list is read. Asking the management list on every read of the Model page would
+  cost a round trip and hold the device lane on a shape nobody here has confirmed, so it is not done.
+- No model was actually started or stopped on real firmware, because that needs a key. The route,
+  the lane, the Host rule and the refusal path were all exercised against the box; only success was
+  not.
+- The console was not rendered. No browser was launched here; the Model page was driven through its
+  HTTP routes only, and the orchestrator owns rendered measurement.
+- An address saved while `TIINY_BASE` or a command-line setting is set is written but does not take
+  effect, which is the documented order. Settings now says so instead of saying "Saved".
+- Saving an endpoint writes its key before the configuration, because the configuration reload is
+  what picks the key up. A configuration that then rolls back leaves that key in `keys.json`
+  against an address no longer listed, until the same address is saved again or forgotten.
+
+Rebased onto `origin/main` at dad3a1b, which carries steps 7b and 7c. Four files conflicted, and
+one behaviour did.
+
+- `config.json` carries both new fields, `endpoints` from this step and `mcp` from 7c. This step
+  had narrowed the command-line overrides to an explicit list because `endpoints` is a saved list
+  and not a flag; `mcp` is a flag, so it is back on that list.
+- The second memory writer 7b added runs after the reply is saved, so it now takes the endpoint its
+  own turn started on, the same way the tool loop does. An exchange answered on one computer is not
+  read back by another.
+- **One behaviour could not keep both sides.** 7b's `test_configuration_change_releases_idle_tts`
+  expected `save_config` to refuse with "Wait for Titan" while the extraction was still running.
+  Item 5 of `docs/STEP-7A.md` says the opposite in as many words: switching while a turn is queued
+  must not strand the queue, the change lands on the next turn, and the one in flight finishes on
+  the endpoint it started on. Refusing and not refusing cannot both hold. The newer contract
+  stands, and the test now asserts the thing 7b was protecting: the change goes through, and the
+  extraction is not swapped out from under itself. The endpoint half is pinned in
+  `tests/test_server.py` against both the tool loop and the extraction. This is the one place the
+  rebase chose between two briefs rather than merging them, so it is worth the orchestrator's eye.
+- 7c's 44 px sweep raised the five controls it measured on screen and left `.ghost-button` alone,
+  so the Model page's own buttons still carry the floor themselves. The comment that pointed at 7c
+  as work still to come now says what actually happened.
+
+`python3 -m unittest` on the rebased tip: **142 tests, 142 passed, 0 skipped**, 32.3 s, exit 0.
+`python3 -m compileall -q lite tests` passed.
+
 ## Step 7b
 
 Version: **0.1.12**, unchanged. `docs/STEP-7B.md` asks for a bump on the last number; the dispatch

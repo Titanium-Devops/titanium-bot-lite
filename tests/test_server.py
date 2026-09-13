@@ -15,13 +15,15 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 import urllib.error
+import urllib.parse
 import urllib.request
 from types import SimpleNamespace
 
 TEST_ROOT = Path(__file__).resolve().parents[1] / 'data/tests'
 TEST_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ['ONELANE_DIR'] = str(TEST_ROOT / '.onelane')
-from lite.server import App, Device, Handler, Refusal, Server, build_prompt, first_paint_bytes, selfcheck, read_memories, read_persona
+from lite.server import (App, Device, Handler, Refusal, Server, build_prompt, endpoint_kind,
+                         first_paint_bytes, selfcheck, read_memories, read_persona)
 
 
 class WireSocket:
@@ -55,12 +57,20 @@ def wire(app, method, path, body=None, headers=None):
 
 
 class AppCase(unittest.TestCase):
+    ENVIRONMENT = dict(TIINY_BASE='http://localhost/v1', TIINY_KEY='test-private-key', TIINY_MODEL='echo')
+    # Every credential this case knows about. No answer may ever contain one.
+    KEYS = ('test-private-key',)
+
+    def prepare(self, root):
+        """Anything the data directory needs before the app first reads it."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=TEST_ROOT)
         self.addCleanup(self.temp.cleanup)
-        self.env = patch.dict(os.environ, TIINY_BASE='http://localhost/v1', TIINY_KEY='test-private-key', TIINY_MODEL='echo')
+        self.env = patch.dict(os.environ, self.ENVIRONMENT)
         self.env.start()
         self.addCleanup(self.env.stop)
+        self.prepare(Path(self.temp.name))
         self.app = App(self.temp.name)
         # Most route tests begin after the separately tested first-run greeting.
         self.app.messages.clear()
@@ -70,7 +80,8 @@ class AppCase(unittest.TestCase):
     def request(self, method, path, body=None, status=200, headers=None):
         actual, response_headers, result = wire(self.app, method, path, body, headers)
         self.assertEqual(actual, status, result)
-        self.assertNotIn('test-private-key', str(result))
+        for key in self.KEYS:
+            self.assertNotIn(key, str(result))
         if status >= 400:
             self.assertIsInstance(result['error'], str)
             self.assertTrue(result['error'])
@@ -135,16 +146,21 @@ class RouteTests(AppCase):
         self.request('POST', '/api/send', {'agentId': 'other', 'text': 'hello'}, 404)
         self.request('POST', '/api/send', {'agentId': 'titan', 'text': ' '}, 400)
 
-    def test_models_and_explicit_future_refusals(self):
+    def test_models_and_refused_actions(self):
         with patch.object(self.app.device, 'request', return_value={'data': [{'id': 'echo'}]}):
             models = self.request('GET', '/api/models')
         self.assertEqual(models['device'], [{'id': 'echo', 'name': 'echo', 'running': True}])
         self.assertEqual(models['lan'], [])
+        self.assertEqual(models['live']['source'], 'device')
         self.assertEqual(self.request('POST', '/api/model', {'action': 'use', 'id': 'another'})['live']['model'], 'echo')
         self.assertEqual(json.loads((self.app.root / 'config.json').read_text())['model'], 'another')
+        self.request('POST', '/api/model', {'action': 'sideways', 'id': 'echo'}, 400)
+        self.request('POST', '/api/model', {'action': 'use'}, 400)
         for action in ('start', 'stop'):
-            self.request('POST', '/api/model', {'action': action, 'id': 'echo'}, 501)
-        self.request('POST', '/api/model', {'action': 'use', 'model': 'echo', 'baseUrl': 'http://elsewhere', 'apiKey': 'test-private-key'}, 501)
+            self.request('POST', '/api/model', {'action': action, 'id': ' '}, 400)
+        self.request('POST', '/api/model', {'action': 'use', 'model': 'echo',
+                                            'baseUrl': 'ftp://elsewhere', 'apiKey': 'test-private-key'}, 400)
+        self.request('POST', '/api/model', {'action': 'forget', 'baseUrl': 'http://nothing/v1'}, 404)
         for verb in ('enable', 'disable', 'pause', 'delete'):
             self.request('POST', '/api/library', {'kind': 'routine', 'verb': verb, 'id': 'daily'}, 404)
         for decision in ('approve', 'deny', 'always'):
@@ -397,3 +413,202 @@ class RealHTTPTests(AppCase):
         with urllib.request.urlopen(base + '/events', timeout=3) as response:
             self.assertEqual(response.headers['Content-Type'], 'text/event-stream')
             self.assertEqual(response.readline(), b'data: {"channel":"changed"}\n')
+
+
+class ModelRouteTests(AppCase):
+    """Route 7 against a fake device, and route 6 against its model rows.
+
+    The environment override is off here: these tests move the base between the
+    device and another computer, and TIINY_BASE outranks config.json by design.
+    """
+    ENVIRONMENT = {}
+    KEYS = ('device-private-key', 'lan-private-key', 'cloud-private-key')
+
+    def prepare(self, root):
+        root.mkdir(parents=True, exist_ok=True)
+        (root / 'keys.json').write_text(json.dumps({'apiKey': 'device-private-key'}))
+
+    def setUp(self):
+        # An empty base in config.json means "find the device", so the search is
+        # stubbed rather than reached for.
+        found = patch('lite.device.find_base', return_value='http://192.0.2.10/v1')
+        found.start()
+        self.addCleanup(found.stop)
+        super().setUp()
+        self.calls = []
+        self.answers = {}
+        self.held = 0
+        self.rows = [{'id': 'chat-model'}, {'id': 'other-model'}]
+        self.app.device.model = 'chat-model'
+        self.app.device.resolved_model = 'chat-model'
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.object(self.app.device.lane, 'hold', self.hold))
+        self.stack.enter_context(patch('urllib.request.urlopen', self.upstream))
+
+    @contextlib.contextmanager
+    def hold(self, **kwargs):
+        self.assertGreater(kwargs['wait'], 0)
+        self.held += 1
+        yield
+
+    def upstream(self, request, **kwargs):
+        self.assertGreater(self.held, 0, 'Device HTTP call bypassed OneLane')
+        path = urllib.parse.urlsplit(request.full_url).path
+        self.calls.append((path, request))
+        status, payload = self.answers.get(path, (200, {'code': 0}))
+        body = json.dumps(payload).encode()
+        if status >= 400:
+            raise urllib.error.HTTPError(request.full_url, status, 'refused', {}, io.BytesIO(body))
+        response = io.BytesIO(body)
+        response.headers = {'Content-Type': 'application/json'}
+        response.status = status
+        return response
+
+    def lifecycle_calls(self):
+        return [path for path, _ in self.calls if path.startswith('/api/v1/models/')]
+
+    def models(self, rows=None):
+        with patch.object(self.app.device, 'request', return_value={'data': self.rows if rows is None else rows}):
+            return self.request('GET', '/api/models')
+
+    def test_lifecycle_runs_on_the_device_and_repeats_its_refusal_in_its_own_words(self):
+        self.request('POST', '/api/model', {'action': 'start', 'id': 'other-model'})
+        path, sent = self.calls[0]
+        self.assertEqual(path, '/api/v1/models/other-model/start')
+        self.assertEqual(sent.data, b'{}')
+        self.assertEqual(sent.get_header('Host'), 'p8800.api.tiiny')
+        self.assertEqual(sent.get_header('Authorization'), 'Bearer device-private-key')
+        self.request('POST', '/api/model', {'action': 'stop', 'id': 'other-model'})
+        self.assertEqual(self.lifecycle_calls(),
+                         ['/api/v1/models/other-model/start', '/api/v1/models/other-model/stop'])
+        # A device that refuses says why. We do not paraphrase it.
+        self.answers['/api/v1/models/other-model/start'] = (400, {'message': 'Not enough NPU memory for this model.'})
+        refused = self.request('POST', '/api/model', {'action': 'start', 'id': 'other-model'}, 502)
+        self.assertEqual(refused['error'], 'Not enough NPU memory for this model.')
+        # A refusal wearing a success status is still a refusal, and a silent one
+        # gets our sentence because the device offered none.
+        self.answers['/api/v1/models/other-model/start'] = (200, {'code': 150004})
+        self.assertIn('would not start', self.request(
+            'POST', '/api/model', {'action': 'start', 'id': 'other-model'}, 502)['error'])
+        # A one-word answer is a code, so ours carries it rather than standing aside,
+        # and a device that somehow echoes the key back does not get to print it.
+        self.answers['/api/v1/models/other-model/stop'] = (500, {'detail': 'device-private-key'})
+        refused = self.request('POST', '/api/model', {'action': 'stop', 'id': 'other-model'}, 502)['error']
+        self.assertIn('would not stop', refused)
+        self.assertIn('[redacted]', refused)
+
+    def test_stopping_the_model_titan_answers_on_is_refused_before_the_device_hears_it(self):
+        refused = self.request('POST', '/api/model', {'action': 'stop', 'id': 'chat-model'}, 409)
+        self.assertIn('Choose another model for Titan first', refused['error'])
+        self.assertFalse(self.calls)
+        self.app.device.model, self.app.device.resolved_model = 'default', None
+        self.request('POST', '/api/model', {'action': 'stop', 'id': 'chat-model'})
+        self.assertEqual(self.lifecycle_calls(), ['/api/v1/models/chat-model/stop'])
+
+    def test_running_is_read_off_the_device_rows_not_the_model_lite_picked(self):
+        answer = self.models([{'id': 'chat-model', 'running': False},
+                              {'id': 'other-model', 'name': 'Other', 'running': True}])
+        self.assertEqual([(row['id'], row['running']) for row in answer['device']],
+                         [('chat-model', False), ('other-model', True)])
+        self.assertIn('Start and stop', answer['note'])
+        self.assertEqual(answer['device'][1]['name'], 'Other')
+        answer = self.models([{'id': 'chat-model', 'status': 'stopped'},
+                              {'id': 'other-model', 'status': 'Loaded'}])
+        self.assertEqual([row['running'] for row in answer['device']], [False, True])
+        # A device that says nothing about loading falls back to the model Lite
+        # picked, and the answer says that is what it did.
+        answer = self.models()
+        self.assertEqual([row['running'] for row in answer['device']], [True, False])
+        self.assertIn('does not say', answer['note'])
+        self.assertIsNone(Device.loaded_flag({'id': 'x'}))
+        self.assertIs(Device.loaded_flag({'id': 'x', 'loaded': True}), True)
+
+    def test_another_computer_persists_across_a_restart_with_its_own_key(self):
+        live = self.request('POST', '/api/model', {
+            'action': 'use', 'baseUrl': 'http://192.168.7.5:11434/v1/',
+            'model': 'llama3', 'apiKey': 'lan-private-key'})['live']
+        self.assertEqual(live['endpoint'], 'http://192.168.7.5:11434/v1')
+        self.assertEqual((live['source'], live['hasKey'], live['model']), ('lan', True, 'llama3'))
+        saved = json.loads((self.app.root / 'config.json').read_text())
+        self.assertEqual(saved['endpoints'], [{'baseUrl': 'http://192.168.7.5:11434/v1', 'model': 'llama3'}])
+        self.assertEqual(saved['base'], 'http://192.168.7.5:11434/v1')
+        self.assertNotIn('lan-private-key', json.dumps(saved))
+        keys = self.app.root / 'keys.json'
+        self.assertEqual(keys.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(keys.read_text()),
+                         {'apiKey': 'device-private-key',
+                          'endpoints': {'http://192.168.7.5:11434/v1': 'lan-private-key'}})
+        self.assertEqual(self.models()['lan'],
+                         [{'baseUrl': 'http://192.168.7.5:11434/v1', 'model': 'llama3', 'hasKey': True}])
+        self.app.close()
+        restarted = App(self.temp.name)
+        self.addCleanup(restarted.close)
+        self.assertEqual(restarted.device.base, 'http://192.168.7.5:11434/v1')
+        self.assertEqual(restarted.device.key, 'lan-private-key')
+        self.assertEqual(restarted.endpoint_source(), 'lan')
+
+    def test_a_cloud_address_is_the_same_route_and_the_device_is_one_press_away(self):
+        self.request('POST', '/api/model', {'action': 'use', 'baseUrl': 'https://api.example.com/v1',
+                                            'model': 'cloud-model', 'apiKey': 'cloud-private-key'})
+        self.assertEqual(self.app.device.key, 'cloud-private-key')
+        self.assertEqual(self.app.endpoint_source(), 'cloud')
+        live = self.request('POST', '/api/model', {'action': 'use', 'source': 'device'})['live']
+        self.assertEqual((live['source'], live['endpoint'], live['model']),
+                         ('device', 'http://192.0.2.10/v1', 'default'))
+        # The device's key is still the device's, and the cloud key never went there.
+        self.assertEqual(self.app.device.key, 'device-private-key')
+        self.request('POST', '/api/model', {'action': 'forget', 'baseUrl': 'https://api.example.com/v1'})
+        self.assertEqual(json.loads((self.app.root / 'keys.json').read_text()),
+                         {'apiKey': 'device-private-key', 'endpoints': {}})
+        self.assertEqual(self.models()['lan'], [])
+        self.assertEqual(endpoint_kind('http://titan.local/v1'), 'lan')
+        self.assertEqual(endpoint_kind('https://api.example.com/v1'), 'cloud')
+
+    def test_a_refused_key_is_reported_as_a_key_and_not_as_weather(self):
+        # Measured on the attached unit: with no key the firmware answers 401 with
+        # this sentence, and calling it "busy" sent the owner to the wrong place.
+        error = urllib.error.HTTPError('http://192.0.2.10/v1/models', 401, 'no', {}, io.BytesIO(
+            json.dumps({'error': 'unauthorized',
+                        'message': 'Missing bearer token: send Authorization.'}).encode()))
+        with patch('urllib.request.urlopen', side_effect=error):
+            refused = self.request('GET', '/api/models', status=502)
+        self.assertEqual(refused['error'], 'Missing bearer token: send Authorization.')
+
+    def test_no_answer_or_log_line_carries_a_key(self):
+        self.request('POST', '/api/model', {'action': 'use', 'baseUrl': 'http://192.168.7.5:11434/v1',
+                                            'model': 'llama3', 'apiKey': 'lan-private-key'})
+        with patch.object(self.app, 'budget', return_value={}):
+            for path in ('/api/state', '/api/settings', '/api/library'):
+                self.request('GET', path)
+        self.models()
+        self.app.device.log.error('upstream said %s', 'lan-private-key')
+        for handler in self.app.device.log.handlers:
+            handler.flush()
+        written = (self.app.root / 'lite.log').read_text()
+        self.assertIn('[redacted]', written)
+        self.assertNotIn('lan-private-key', written)
+
+    def test_a_turn_in_flight_keeps_its_endpoint_and_never_blocks_the_switch(self):
+        started = self.app.device
+        reply = self.app.message('titan', '', 'working')
+        self.app.active = True
+        try:
+            self.request('POST', '/api/model', {'action': 'use', 'baseUrl': 'http://192.168.7.5:11434/v1',
+                                                'model': 'llama3'})
+        finally:
+            self.app.active = False
+        switched = self.app.device
+        self.assertIsNot(switched, started)
+        with patch.object(started, 'chat', return_value={}) as before, \
+                patch.object(switched, 'chat', return_value={}) as after:
+            self.app.tool_loop([{'role': 'user', 'content': 'hello'}], lambda chunk: None, reply, device=started)
+            self.assertEqual((before.call_count, after.call_count), (1, 0))
+            self.app.tool_loop([{'role': 'user', 'content': 'hello'}], lambda chunk: None, reply)
+            self.assertEqual((before.call_count, after.call_count), (1, 1))
+            # The second memory writer belongs to the same exchange, so it reads the
+            # exchange back on the computer that answered it, not on the new one.
+            self.app.extract_memories('I moved to Dallas.', 'Noted.', started)
+            self.assertEqual((before.call_count, after.call_count), (2, 1))
+            self.app.extract_memories('I moved to Dallas.', 'Noted.')
+            self.assertEqual((before.call_count, after.call_count), (2, 2))

@@ -8,7 +8,7 @@ Four things never come to you in a conversation: a credential of any kind, a pas
 
 ## Where credentials go
 
-Never in chat. This device currently uses the owner’s local `keys.json` (mode 0600); Settings has no credential entry box yet. Never ask the owner to send its contents.
+Never in chat. There is one box for it: the masked Key box in Settings > Model, which writes to the owner’s local `keys.json` (mode 0600). Point at that box and stop there. Never ask the owner to send you what is in the file.
 
 ## If somebody pastes one anyway
 

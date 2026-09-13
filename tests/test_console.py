@@ -171,6 +171,23 @@ class ConsoleContractTests(unittest.TestCase):
         # The choice has to reach the module that opens the stream, not only the settings file.
         self.assertIn("global.__voice?.setMicDeviceId?.(", settings)
 
+    def test_model_page_starts_stops_and_asks_for_a_key_in_one_masked_box(self):
+        settings = (CONSOLE / 'settings.js').read_text()
+        # A press on a device model reaches route 7 with that model's id.
+        self.assertIn("modelButton(entry.running?'stop':'start'", settings)
+        self.assertIn('data-model-id="${esc(entry.id)}"', settings)
+        # The credential box is masked, starts empty and is never written into.
+        self.assertIn('<input type="password" data-endpoint-key', settings)
+        self.assertIn("autocomplete=\"off\" value=\"\"", settings)
+        self.assertNotIn('apiKey:facts', settings)
+        self.assertNotIn('facts.apiKey', settings)
+        # Only a typed key is sent, so an empty box keeps the one already saved.
+        self.assertIn('if(key)body.apiKey=key;', settings)
+        # The way back to the device, and what the device is doing now.
+        self.assertIn("body={action:'use',source:'device'}", settings)
+        self.assertIn('data-live-source', settings)
+        self.assertNotIn('not available yet', settings)
+
     def test_dropped_modules_are_absent(self):
         for name in ('gateway-adapter.js', 'adapter.js', 'marketplace-bots.js', 'marketplace',
                      'screen-tile.js', 'cloud-browser.js', 'code-tasks.js', 'gap-badge.js',

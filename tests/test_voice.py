@@ -11,7 +11,6 @@ import urllib.error
 import urllib.parse
 import wave
 
-from lite.server import Refusal
 from lite.voice import pick_models
 from tests.test_server import AppCase, wire
 
@@ -263,13 +262,15 @@ class VoiceTests(AppCase):
 
     def test_configuration_change_releases_idle_tts(self):
         self.turn()
-        # The audio is already back; the worker is still extracting memory from the
-        # exchange, and a configuration change waits for the device rather than
-        # swapping it mid-request.
-        with self.assertRaisesRegex(Refusal, 'Wait for Titan'):
-            self.app.save_config({'name': 'Ada'})
-        self.wait_idle()
+        # The audio is already back and the worker may still be extracting memory
+        # from the exchange. Step 7a's contract is that a configuration change is
+        # not made to wait for that: the extraction keeps the endpoint it started
+        # on, so nothing is swapped out from under it, and the new one takes the
+        # next turn. tests/test_server.py holds the endpoint half of this.
+        started = self.app.device
         self.app.save_config({'name': 'Ada'})
+        self.assertIsNot(self.app.device, started)
+        self.wait_idle()
         self.assertIsNone(self.app.voice.loaded)
         self.assertIsNone(self.app.voice.tts_model)
         self.assertEqual(self.app.settings['botName'], 'Ada')

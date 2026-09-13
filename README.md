@@ -5,8 +5,9 @@ Built for [Tiiny](https://tiiny.ai).
 
 Titan talks to the model on your pocket device. This first version runs on a Mac or Linux computer
 beside it and gives you chat, file tools, saved memories, an editable persona, a folder of skills and scheduled routines.
-You can talk to it out loud, using the speech models on your device. Starting and stopping a
-model is still done in your device's own settings.
+You can talk to it out loud, using the speech models on your device. Settings > Model lists the
+models on your device, starts and stops them, and can point Titan at another computer on your
+network or a cloud address instead.
 
 Made by Titanium Computing. The full product, with a team of bots, mail, a browser and a computer of
 its own, is at https://titanium.bot.
@@ -126,6 +127,20 @@ On first run, the server creates `data/config.json` with every field below. Sett
 saves the API address (`base`) and model there, including when the device is unavailable.
 Use `default` to choose the first chat model the device lists.
 
+Settings > Model also lists the models on your device and starts or stops them. It refuses to stop
+the one Titan is answering on: choose another model for Titan first. Whether a model shows as
+running comes from what your device says about it. A device that says nothing marks the model Titan
+is set to use and prints a line saying that is what it did.
+
+The same page connects another computer on your network, such as Ollama or llama.cpp, or a cloud
+address. It takes an address ending in `/v1`, the model name that computer serves, and its key in
+the masked box. That box is the only place to type a credential. The key is written to
+`data/keys.json` with permissions `0600` under that address, is never shown again, and never
+reaches the page or the log. Your device's own key stays separate, so **Use this device** puts
+Titan back on your Tiiny in one press. A saved computer is listed with its model, and **Remove**
+forgets it and its key. A message already being answered finishes on the endpoint it started on;
+the change lands on the next one.
+
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `base` | *empty, meaning "find the device"* | Your device's OpenAI API address. Leave it empty and Lite looks: `TIINY_BASE`, then `~/.tiinyapps/device.json`, then every attached USB link and this machine's own network, on port 39218. An address here or in `TIINY_BASE` wins. |
@@ -133,6 +148,7 @@ Use `default` to choose the first chat model the device lists.
 | `port` | `7788` | The port for this console. |
 | `bind` | `0.0.0.0` | Listen on all network interfaces; use `127.0.0.1` for this computer only. |
 | `name` | `Titan` | Your assistant's name. |
+| `endpoints` | *empty* | The other computers saved in Settings > Model, each an address and a model. Their keys are not here; they are in `keys.json`. |
 | `mcp` | `true` | Offer Titan's saved facts and skills to your device's own chat, read only. Set it to `false`, or start with `--no-mcp`, to close that door. |
 
 Command-line options `--base`, `--model`, `--key`, `--port`, `--bind` and `--name` take priority
