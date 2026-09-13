@@ -757,3 +757,92 @@ Remaining limits: a Tiiny is attached over USB and `lite.device.find_base()` fou
 its USB address, but it answers `401 auth_failed` without a key and this audit had no access to
 one. So no device inference, no device speech to text, no device text to speech and no model
 lifecycle call was exercised against real firmware. Every model number above is the echo model.
+
+## Step 7b
+
+Version: **0.1.12**, unchanged. `docs/STEP-7B.md` asks for a bump on the last number; the dispatch
+for this branch says not to move `lite/VERSION`, so the release number stays where the audit left
+it and the bump belongs to whoever cuts the next release. Nothing else in the brief was dropped.
+
+Rows 7 and 8 of `docs/AUDIT-2026-09-13.md`: the second memory writer, and a recall that chooses.
+
+Changed files:
+
+- `lite/server.py`: the memory half of `docs/agent-pieces.md` section 1, ported. `is_memorable`,
+  `relevance_tokens`, `select_relevant`, `split_fact`, `parse_extracted`, `select_memories`,
+  `render_memory` and the extraction prompt are module-level and pure. `App.extract_memories` makes
+  one more model request after the reply is already saved, with `tool_choice: "none"`, and
+  `App.apply_extracted` puts every line it returns through the `update_state` the tool already
+  uses, so the 500-character refusal, the whitespace collapse and the dedupe are the same code.
+  `build_prompt` takes a per-conversation recall state and renders the memory section through
+  `render_memory` instead of shipping the last 40 facts unranked.
+- `lite/server.py`, the worker: `_work` releases a waiting voice turn before it extracts anything,
+  so a spoken reply is handed back first, and `App.release_waiter` is the one place that does it.
+  The extraction runs only on the main conversation, only after a reply that finished, and only
+  when `is_memorable` says the exchange was worth it. A failure there is a log line.
+- `tests/test_memory.py`: new. Eleven tests. A fake device whose second response emits a profile
+  line, a log line, a note and a `remove:`, asserted against the files afterwards; NONE and
+  unparseable prose writing nothing; an over-long fact with no sentence boundary refused rather
+  than sliced; a long one split at a sentence boundary with every word kept; the extraction skipped
+  for four trivial exchanges and run for a question; no extraction on the echo model or a failed
+  turn; a failed extraction leaving the turn alone; the ranker preferring an overlapping fact over
+  a newer one; the budget line naming the remaining count; and the render frozen per conversation
+  and rebuilt after a write.
+- `tests/test_device_turn.py`: the captured first-run turn now expects three device requests rather
+  than two, and asserts the shape of the third: `tool_choice: "none"`, a system and a user message,
+  the saved fact listed as existing memory, and both halves of the exchange.
+- `tests/test_voice.py`: a configuration change immediately after a spoken turn is refused while
+  the worker is still extracting, then accepted once it is idle. The test asserts both.
+- `README.md`: the sentence promising every profile fact plus the last 40 log facts was no longer
+  true.
+
+Three decisions worth naming, because each narrows what runs:
+
+- **The echo model runs no extraction.** It reverses text, so a second pass through it can only
+  produce garbage, and it would double the cost of every offline turn. Measured: an echo turn on
+  port 7812 wrote no facts.
+- **Routine turns run no extraction.** A scheduled prompt is the model talking to its future self,
+  and `agent-pieces` is explicit that request mechanics do not belong in memory.
+- **The extraction keeps the worker busy**, so `save_config` refuses for its duration with the
+  409 it already raises during a turn. Keeping `active` true is deliberate: swapping `self.device`
+  underneath a live device request is exactly what that guard exists to stop.
+
+One defect found and fixed on the way. Holding the extraction back while the voice route finishes
+speaking deadlocks: the voice turn waits for this worker, and this worker was waiting for the voice
+turn. The wait now ends the moment another job is queued.
+
+Verification, all on Jason's Mac on 2026-09-13:
+
+- `python3 -m unittest` before the change: **105 tests, 105 passed, 0 skipped**, exit 0, 26.6 s.
+  After: **116 tests, 116 passed, 0 skipped**, exit 0, 28.3 s.
+- `python3 -m compileall -q lite tests` and `git diff --check`: passed.
+- Echo selfcheck: 38.33 MB RSS, 23.82 KB of door resources, 1,920.95 ms cold start, 2.41 ms to the
+  first token, 44.63 ms for the turn, `budgetPassed` true.
+
+Measured live, through a real Lite process on `127.0.0.1:7811` answering real HTTP:
+
+- A Tiiny is attached and `find_base()` reports `http://172.17.7.177/v1`, and it answers
+  `401 unauthorized, missing_token` without a key. This worker may not read the key file, so the
+  device stands in as a local fake on port 7813 that serves one chat model and streams
+  Server-Sent Events, with the second model call canned and deliberately slowed by 2.0 s.
+- One turn through `POST /api/send`: the reply reached `GET /api/transcript` **0.11 s** in, and the
+  extracted facts appeared in `/api/library` **1.94 s after that**. Nobody waited for the second
+  call. The device saw two requests: the turn, then a 1,125-character extraction prompt with two
+  messages and `tool_choice: "none"`.
+- Afterwards `memory/profile.md` held the profile fact, `memory/log/2026-09.md` held the log fact,
+  and the superseded fact the extraction named under `remove:` was gone from disk.
+- With 48 facts on disk and a question about a lathe, 41 were rendered, the overlapping fact from
+  2025-11 was one of them, it displaced `fact-05`, and the tail line read
+  `7 more facts are saved on disk`.
+- Two consecutive turns with memory unchanged produced a **byte-identical** 349-character memory
+  section inside a 5,119-character system prompt.
+- The echo path still works: a turn on port 7812 answered in 2.01 s, wrote no memory, and printed
+  41.42 MB RSS, 23.82 KB and 968.06 ms cold start.
+
+Remaining limits: no real device inference was run, so nothing here says what a model on a Tiiny
+emits for this extraction prompt, what the second call costs in tokens or seconds on that hardware,
+or whether its prefix cache actually holds across the byte-identical section. Those need the device
+key. The ranker is keyword overlap with a four-character floor and a stopword list, so it is blind
+to a synonym and to any language that does not tokenise on those rules. A fact whose first sentence
+is longer than 500 characters is still refused outright, which is the intended behaviour and also
+means an owner can lose an extracted fact to a run-on sentence, with only a log line to show for it.

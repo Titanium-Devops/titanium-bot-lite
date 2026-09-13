@@ -76,9 +76,14 @@ does the listening and the speaking, so nothing you say leaves your network, and
 and a voice model both need to be loaded on the device. On a narrow screen the whole screen
 becomes the call. Press any file, memory or skill in the Files panel to read it.
 
-Profile facts are kept in every prompt along with the last 40 dated log facts. A fact over 500
-characters is refused rather than shortened. First-time setup begins with “What should I call
-you?”; say “run first-time setup” to repeat the interview. Change the persona in Settings > General.
+Profile facts are kept in every prompt. Dated log facts are ranked against what you just said,
+up to forty of them and four thousand characters, and the list ends with a line saying how many
+more are on disk. After a turn worth remembering, Titan makes one more short model call to write
+down what it learned, so something you mention in passing is not lost when the conversation ends.
+Greetings and one-word answers do not cost that second call. A fact over 500 characters is refused
+rather than shortened, and a long one is split at a sentence boundary before it is saved.
+First-time setup begins with “What should I call you?”; say “run first-time setup” to repeat the
+interview. Change the persona in Settings > General.
 Routines use five-field cron schedules in the server’s local time. New routines stay switched off
 until you enable them in Routines or ask Titan to enable them. The panel also lets you pause or
 delete a routine and view its results. Keep Lite running: it checks clocks every 30 seconds,

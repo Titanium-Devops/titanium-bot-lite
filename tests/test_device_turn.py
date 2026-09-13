@@ -30,8 +30,11 @@ class DeviceTurnTests(AppCase):
             {'choices': [{'delta': {'content': answer}}]},
             {'choices': [{'delta': {}, 'finish_reason': 'stop'}]},
         ])
+        # The third request is the second memory writer, which runs once the answer is
+        # already in the transcript. It has nothing to add here: the tool saved the fact.
+        third = stream_response([{'choices': [{'delta': {'content': 'NONE'}}]}])
         started = time.monotonic()
-        with patch('urllib.request.urlopen', side_effect=[first, second]) as opened:
+        with patch('urllib.request.urlopen', side_effect=[first, second, third]) as opened:
             self.app.send({'agentId': 'titan', 'text': 'Remember that my dog is named Biscuit and has a folded ear. Then tell me in one sentence what you remembered.'})
             with self.app.changed:
                 complete = self.app.changed.wait_for(
@@ -45,11 +48,17 @@ class DeviceTurnTests(AppCase):
         transcript = json.loads((self.app.root / 'transcripts/main.json').read_text())
         self.assertEqual(transcript[-1]['text'], answer)
         self.assertLess(time.monotonic() - started, 1)
-        self.assertEqual(opened.call_count, 2)
+        self.assertEqual(opened.call_count, 3)
         bodies = [json.loads(call.args[0].data) for call in opened.call_args_list]
         self.assertEqual(bodies[0]['messages'][-2]['content'], greeting['text'])
         self.assertEqual(bodies[1]['messages'][-1]['content'], 'Remembered: My dog is named Biscuit and has a folded ear.')
         self.assertEqual(bodies[1]['messages'][-1]['tool_call_id'], 'b6lPmk5epxZJLcaGvmSH43nFQDuOZ4ux')
+        self.assertEqual(bodies[2]['tool_choice'], 'none')
+        self.assertEqual([m['role'] for m in bodies[2]['messages']], ['system', 'user'])
+        self.assertIn('NONE', bodies[2]['messages'][0]['content'])
+        self.assertIn('- My dog is named Biscuit and has a folded ear.', bodies[2]['messages'][1]['content'])
+        self.assertIn('Owner: Remember that my dog', bodies[2]['messages'][1]['content'])
+        self.assertIn('Assistant: ' + answer, bodies[2]['messages'][1]['content'])
         # A new acquisition after both requests proves the real lane was released.
         with self.app.device.lane.hold(why='regression verification', wait=0.1):
             pass
