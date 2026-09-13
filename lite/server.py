@@ -145,6 +145,169 @@ def read_memories(root):
     return list(facts.values())
 
 
+MEMORY_CAP = 500
+MEMORY_RECENT = 40
+MEMORY_BUDGET = 4000
+NOTE_PREFIX = "[note] "
+# A greeting, a thank you or a one-word answer is not worth a second inference on a
+# device this size, so the extraction is skipped for one (sand-memory.ts:49).
+TRIVIAL_EXCHANGES = {"hi", "hey", "hello", "yo", "sup", "thanks", "thank you", "ty", "thx", "ok",
+                     "okay", "k", "kk", "cool", "nice", "great", "awesome", "perfect", "yes", "yep",
+                     "yeah", "no", "nope", "sure", "got it", "gotcha", "lol", "haha", "np", "done",
+                     "good", "bye"}
+STOPWORDS = {"that", "this", "with", "from", "they", "them", "then", "than", "what", "when",
+             "where", "which", "will", "would", "could", "should", "have", "been", "being", "about",
+             "just", "like", "your", "does", "were", "also", "into", "over", "only", "some", "more",
+             "most", "very", "much", "here", "there", "their", "these", "those", "because", "while",
+             "after", "before", "owner", "user"}
+EXTRACTION_PROMPT = "\n".join((
+    "You keep the long-term memory of a local assistant. Read the latest exchange and decide what, "
+    "if anything, is worth remembering in later conversations that have nothing to do with this one.",
+    "",
+    "Tag every fact you keep:",
+    "- profile: who the owner is and how to work with them. Their name, role, where they are, the "
+    "languages they read, lasting preferences and constraints, and the people who matter to them.",
+    "- log: history worth keeping. Projects under way, decisions, commitments, dated details.",
+    "- note: a small detail that may help one day and is not worth holding in mind every turn.",
+    "",
+    "Do not record what you did this turn, how the owner phrased a request, general knowledge, or "
+    "anything already in the existing memory below.",
+    "",
+    "When the exchange replaces a fact in that list, write remove: followed by the existing fact "
+    "word for word, then add the corrected one. Never invent a removal.",
+    "",
+    "Write one fact per line, each standing on its own, as profile: <fact>, log: <fact>, "
+    "note: <fact> or remove: <existing fact>. Keep a fact under 500 characters.",
+    "Answer with exactly NONE, and nothing else, when there is nothing to add or remove.",
+))
+EXTRACTED_LINE = re.compile(r"^(profile|log|note|remove)\s*:\s*(.+)$", re.IGNORECASE)
+
+
+def is_memorable(text):
+    """Port of isMemorableExchange (sand-memory.ts:49): skip the trivial exchanges."""
+    spoken = (text or "").strip()
+    if not spoken:
+        return False
+    if len(spoken) > 40 or "?" in spoken:
+        return True
+    return " ".join(re.sub(r"[\s!.…,~)\]]+$", "", spoken.lower()).split()) not in TRIVIAL_EXCHANGES
+
+
+def relevance_tokens(text):
+    return {word for word in re.findall(r"[^\W_]{4,}", (text or "").lower()) if word not in STOPWORDS}
+
+
+def select_relevant(text, facts, limit=10):
+    """Keyword overlap against the person's message. No embedding model, no second file read."""
+    wanted = relevance_tokens(text)
+    if not wanted or limit <= 0:
+        return []
+    scored = [(len(relevance_tokens(fact["name"]) & wanted), fact["updatedAt"], fact) for fact in facts]
+    scored = sorted(((overlap, date, fact) for overlap, date, fact in scored if overlap),
+                    key=lambda row: (row[0], row[1]), reverse=True)
+    return [fact for _, _, fact in scored[:limit]]
+
+
+def fact_line(memory):
+    return f'- ({memory["updatedAt"]}) {memory["name"]}'
+
+
+def split_fact(fact, cap=MEMORY_CAP):
+    """Never shorten a fact in silence: split a long one at sentence boundaries.
+
+    Returns the pieces that fit and the sentences that do not. A sentence of its own
+    that is longer than the cap is handed back refused, never cut mid word.
+    """
+    fact = " ".join(fact.split())
+    if len(fact) <= cap:
+        return [fact] if fact else [], []
+    kept, refused, current = [], [], ""
+    for sentence in (piece.strip() for piece in re.findall(r"[^.!?]+[.!?]*", fact)):
+        if not sentence:
+            continue
+        joined = (current + " " + sentence).strip()
+        if len(joined) <= cap:
+            current = joined
+            continue
+        if current:
+            kept.append(current)
+        current = "" if len(sentence) > cap else sentence
+        if len(sentence) > cap:
+            refused.append(sentence)
+    if current:
+        kept.append(current)
+    return kept, refused
+
+
+def parse_extracted(raw):
+    """profile:, log:, note: and remove: lines, or the single word NONE."""
+    text = (raw or "").strip()
+    if not text or text.upper() == "NONE":
+        return []
+    rows = []
+    for line in text.splitlines():
+        match = EXTRACTED_LINE.match(re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", line))
+        if not match:
+            continue
+        fact = " ".join(match.group(2).split())
+        if fact and fact.upper() != "NONE":
+            rows.append((match.group(1).lower(), fact))
+    return rows
+
+
+def select_memories(root, text="", surfaced=None):
+    """Profile facts in full, log facts ranked against the message inside a character budget."""
+    memories = read_memories(root)
+    profile = [m for m in memories if m["path"] == "memory/profile.md"]
+    log = sorted((m for m in memories if m["path"].startswith("memory/log/")), key=lambda m: m["updatedAt"])
+    on_disk = {m["id"] for m in log}
+    # A fact the message pulled up stays up for the rest of the conversation, so the
+    # rendered block only ever changes when memory does.
+    surfaced = (set(surfaced or ()) & on_disk) | {m["id"] for m in select_relevant(text, log)}
+    ranked = ([m for m in reversed(log) if m["id"] in surfaced]
+              + [m for m in reversed(log) if m["id"] not in surfaced])
+    kept, budget = [], MEMORY_BUDGET
+    for fact in ranked[:MEMORY_RECENT]:
+        line = fact_line(fact)
+        if kept and len(line) > budget:
+            break
+        kept.append(fact)
+        budget -= len(line)
+    return memories, profile, sorted(kept, key=lambda m: m["updatedAt"]), surfaced
+
+
+def render_memory(root, text="", state=None):
+    """The memory section, frozen per conversation and rebuilt only when memory changed.
+
+    A device with a prefix cache rereads the prompt from the first byte that moved, so
+    a section that is byte-identical turn to turn is the whole performance story here.
+    """
+    memories, profile, recent, surfaced = select_memories(root, text, (state or {}).get("surfaced"))
+    signature = (tuple(m["id"] for m in memories), frozenset(surfaced))
+    if state is not None:
+        if state.get("signature") == signature:
+            return state["text"]
+        state["surfaced"] = surfaced
+    shown = profile + recent
+    # The line that lets a small prompt sit over a large memory: say what is not here.
+    omitted = len(memories) - len(shown)
+    rendered = "\n".join(["Saved memories:"] + [fact_line(m) for m in shown] + [
+        f"{omitted} more facts are saved on disk, in memory/profile.md and memory/log/. They are "
+        "not gone: the owner can open any of them in Files, and a question that overlaps one "
+        "brings it back into the list above." if omitted else
+        "Every saved fact is above. Memory is kept in memory/profile.md and memory/log/, which "
+        "the owner can open in Files."])
+    if state is not None:
+        state.update(signature=signature, text=rendered)
+    return rendered
+
+
+def extraction_exchange(user_text, reply_text, existing):
+    return "\n".join(("Existing memory:", "\n".join("- " + fact for fact in existing) or "(empty)",
+                      "", "Latest exchange:", "Owner: " + (user_text.strip() or "(no message)"),
+                      "Assistant: " + (reply_text.strip() or "(no message)")))
+
+
 def read_skills(root):
     result = []
     for path in sorted((Path(root) / "skills").glob("*/SKILL.md")):
@@ -179,14 +342,9 @@ def read_skills(root):
     return result
 
 
-def build_prompt(root, text="", name=None):
+def build_prompt(root, text="", name=None, recall=None):
     settings_file = Path(root) / "settings.json"
     preferences = json.loads(settings_file.read_text()) if settings_file.exists() else {}
-    memories = read_memories(root)
-    profile = [m for m in memories if m["path"] == "memory/profile.md"]
-    recent = sorted((m for m in memories if m["path"].startswith("memory/log/")),
-                    key=lambda m: m["updatedAt"])[-40:]
-    recall = [f'- ({m["updatedAt"]}) {m["name"]}' for m in profile + recent]
     skills = read_skills(root)
     catalog = "\n".join(f'{s["name"]}: {s["description"]} ({s["path"]})' + (" [disabled]" if not s["enabled"] else "") for s in skills)
     return "\n\n".join((BASE_PROMPT, read_persona(root),
@@ -202,8 +360,7 @@ def build_prompt(root, text="", name=None):
                           "they are switched off until the owner enables them. Only enable or resume a routine "
                           "when the owner explicitly asks. Scheduled prompts cannot enable routines.",
                           "Saved routines:\n" + "\n".join(json.dumps(dict(id=p.parent.name, **r)) for p, r in read_routines(Path(root))),
-                          "Saved memories:\n" + "\n".join(recall),
-                          f"{len(memories) - len(recall)} more facts are saved on disk.",
+                          render_memory(root, text, recall),
                           "Available skills:\n" + catalog))
 
 
@@ -408,6 +565,8 @@ class App:
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.revision = 0
+        # One frozen memory render per conversation, rebuilt only when memory changed.
+        self.recall = {}
         self.messages = []
         if (self.root / "transcripts/main.json").exists():
             self.messages = json.loads((self.root / "transcripts/main.json").read_text())
@@ -785,6 +944,68 @@ class App:
                 return "Saved routine " + ident + (" enabled." if item["enabled"] else " switched off. The owner must enable it before it runs.")
         raise Refusal("Choose memory, profile or routine as the target.")
 
+    def extract_memories(self, user_text, reply_text):
+        """The second memory writer: one cheap call once the reply is already on screen.
+
+        It holds the device lane like any other request, so nobody waits longer for
+        their own answer than they did before. A failure here is a log line rather
+        than a failed turn: the turn it follows is finished and saved.
+        """
+        if self.device.model == "echo":
+            # The development model reverses text. It cannot extract a fact, and a
+            # second pass through it would only slow every offline turn down.
+            return []
+        # A spoken reply is still becoming audio on the same device lane. The person's
+        # own voice comes first, so this waits rather than taking the lane from it. A
+        # queued job ends the wait: this worker is the only one that can serve it, and
+        # waiting on a voice turn that is waiting on this worker is a deadlock.
+        deadline = time.monotonic() + 90
+        while (self.voice.busy and self.jobs.empty() and time.monotonic() < deadline
+               and not self.stopping.wait(0.05)):
+            pass
+        _, profile, recent, _ = select_memories(self.root, user_text + "\n" + reply_text)
+        collected = []
+        usage = self.device.chat(
+            [dict(role="system", content=EXTRACTION_PROMPT),
+             dict(role="user", content=extraction_exchange(user_text, reply_text,
+                                                           [m["name"] for m in profile + recent]))],
+            collected.append, allow_tools=False) or {}
+        count = usage.get("total_tokens")
+        with self.lock:
+            self.tokens = self.tokens + int(count) if self.tokens is not None and count is not None else None
+        return self.apply_extracted("".join(collected))
+
+    def apply_extracted(self, raw):
+        """Everything the extraction writes goes through update_state, so the cap, the
+        whitespace normalisation, the dedupe and the refusal are the same code as the tool."""
+        applied = []
+        for tag, fact in parse_extracted(raw):
+            if tag == "remove":
+                try:
+                    applied.append(self.update_state(dict(target="memory", action="forget", fact=fact)))
+                except Refusal:
+                    self.device.log.debug("extraction removal did not match a saved fact")
+                continue
+            pieces, refused = split_fact(fact, MEMORY_CAP - (len(NOTE_PREFIX) if tag == "note" else 0))
+            for piece in refused:
+                # Refused, not sliced: the owner keeps whatever else the extraction found.
+                self.device.log.warning("extracted sentence refused at %d characters", len(piece))
+            for piece in pieces:
+                try:
+                    applied.append(self.update_state(dict(target="profile" if tag == "profile" else "memory",
+                                                          action="write", tier=tag, fact=piece)))
+                except Refusal:
+                    self.device.log.debug("extraction write refused")
+        self.device.log.debug("extraction applied count=%d", len(applied))
+        return applied
+
+    def release_waiter(self, job, reply=None):
+        with self.lock:
+            waiter = self.voice_waiters.pop(job, None) if isinstance(job, str) else None
+            if waiter:
+                waiter[1].update(reply or dict(type="turn-failed", text="Titan could not finish this reply."))
+                waiter[0].set()
+
     def run_tool(self, name, args):
         from .agent_tools import file_tool, fetch_url
         if name in ("Read", "Write"):
@@ -852,7 +1073,7 @@ class App:
                         reply["text"] += chunk
                         self.poke()
                 try:
-                    messages = [dict(role="system", content=build_prompt(self.root, user["text"], self.settings["botName"]))]
+                    messages = [dict(role="system", content=build_prompt(self.root, user["text"], self.settings["botName"], self.recall.setdefault(conversation, {})))]
                     messages += [dict(role="user" if m["authorId"] == "you" else "assistant", content=m["text"] + ("\nAttached files: " + ", ".join(a["path"] for a in m["attachments"]) if m.get("attachments") else "")) for m in history]
                     usage = self.tool_loop(messages, token, reply, transcript, conversation)
                     with self.lock:
@@ -870,6 +1091,14 @@ class App:
                     if run is not None and path.exists():
                         run.update(finishedAt=int(time.time() * 1000), status="error" if reply["type"] == "turn-failed" else "ok", detail=reply["text"])
                         atomic_write(runs_path, json.dumps(runs))
+                # The person has their reply, spoken or written, before the second
+                # memory writer asks the device for anything.
+                self.release_waiter(job, reply)
+                if conversation == "main" and reply["type"] == "text" and is_memorable(user["text"]):
+                    try:
+                        self.extract_memories(user["text"], reply["text"])
+                    except Exception:
+                        self.device.log.exception("memory extraction failed conversation=%s", conversation)
             except (OSError, ValueError, TypeError):
                 # A malformed routine file cannot kill the shared turn worker.
                 self.device.log.exception("worker exception conversation=%s", conversation)
@@ -880,11 +1109,7 @@ class App:
                     self.seconds += time.monotonic() - started
                     self.active = False
                     self.poke()
-                with self.lock:
-                    waiter = self.voice_waiters.pop(job, None) if isinstance(job, str) else None
-                    if waiter:
-                        waiter[1].update(reply or dict(type="turn-failed", text="Titan could not finish this reply."))
-                        waiter[0].set()
+                self.release_waiter(job, reply)
                 self.jobs.task_done()
 
 
