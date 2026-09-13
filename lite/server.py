@@ -31,6 +31,7 @@ from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import IMPORT_STARTED, __version__
+from . import mcp as connector
 from .routines import Scheduler, read_routines
 
 CONSOLE = Path(__file__).parent / "console"
@@ -69,7 +70,7 @@ def atomic_write(path: Path, content: str, mode=0o644):
 # a name the TiinyOS desktop app puts in /etc/resolver, so it resolved on one Mac
 # and nowhere on Linux, which this bot also runs on.
 DEFAULTS = dict(base="", model="default", port=7788,
-                bind="0.0.0.0", name="Titan")
+                bind="0.0.0.0", name="Titan", mcp=True)
 
 
 def load_config(root, overrides=None):
@@ -80,7 +81,7 @@ def load_config(root, overrides=None):
         atomic_write(path, json.dumps(DEFAULTS, indent=2) + "\n")
     saved = json.loads(path.read_text())
     if not isinstance(saved, dict) or set(saved) - DEFAULTS.keys():
-        raise Refusal("Use only base, model, port, bind and name in config.json; keep the key in keys.json.")
+        raise Refusal("Use only base, model, port, bind, name and mcp in config.json; keep the key in keys.json.")
     values = DEFAULTS | saved
     keys = root / "keys.json"
     if not keys.exists():
@@ -111,6 +112,8 @@ def load_config(root, overrides=None):
     for field in ("base", "model", "bind", "name", "key"):
         if not isinstance(values[field], str) or (field != "key" and not values[field].strip()):
             raise Refusal("Config values must be text, with a numeric port.")
+    if not isinstance(values["mcp"], bool):
+        raise Refusal("Set mcp to true or false in config.json.")
     parsed = urllib.parse.urlsplit(values["base"])
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise Refusal("Use a plain HTTP or HTTPS model address without embedded credentials.")
@@ -558,6 +561,10 @@ class App:
                                      enabled=item.get("enabled") is True, lastRun=item.get("lastRunAt"),
                                      conversationId="routine-" + ident))
         return dict(memories=read_memories(self.root), skills=skills, routines=routines)
+
+    def skill_markdown(self, ident):
+        """One skill in full, for the files viewer's twin: the MCP connector."""
+        return next((s for s in read_skills(self.root) if s["id"] == ident), None)
 
     def library_action(self, body):
         kind, verb = body.get("kind"), body.get("verb")
@@ -1117,6 +1124,20 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(app.voice.turn(recordings[0]))
         if verb == "GET" and path == "/api/health":
             return self.respond(dict(app="titanium-bot-lite", version=__version__))
+        if path == "/api/mcp" and verb == "GET":
+            host = self.headers.get("Host") or ""
+            origin = "http://" + host if host else ""
+            return self.respond(connector.descriptor(origin, app.config.get("mcp", True)))
+        if path == "/mcp":
+            if not app.config.get("mcp", True):
+                raise Refusal("This connector is switched off in config.json.", 404)
+            if verb != "POST":
+                raise Refusal("Send a JSON-RPC message with POST.", 405)
+            message, _ = self.body()
+            answer = connector.handle(app, message)
+            if answer is None:
+                return self.respond(b"", 202, content_type="application/json; charset=utf-8")
+            return self.respond(answer)
         if verb == "GET" and path == "/api/state":
             return self.respond(app.state())
         if verb == "GET" and path == "/api/settings":
@@ -1291,6 +1312,8 @@ def main():
     for field in ("base", "model", "key", "name"):
         parser.add_argument("--" + field)
     parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("--mcp", action=argparse.BooleanOptionalAction, default=None,
+                        help="Offer Titan's memory and skills to a TiinyOS connector")
     parser.add_argument("--show-config", action="store_true")
     parser.add_argument("--stop", action="store_true", help="Stop the process using this data directory")
     parser.add_argument("--data-dir")
