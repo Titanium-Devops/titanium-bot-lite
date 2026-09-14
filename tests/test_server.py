@@ -442,8 +442,11 @@ class UpstreamTests(AppCase):
         chat, voice = self.app.device.is_chat_model, self.app.device.is_voice_model
         self.assertTrue(chat(self.CHAT_ROW))
         self.assertFalse(chat(self.VOICE_ROW))
-        self.assertTrue(voice(self.VOICE_ROW))
-        self.assertFalse(voice(self.CHAT_ROW))
+        # Both answer with a bool. The capability test is a set intersection, and handing back
+        # the set instead would be true enough for an if and wrong for anything that compares.
+        self.assertIs(voice(self.VOICE_ROW), True)
+        self.assertIs(voice(self.CHAT_ROW), False)
+        self.assertIs(chat(self.CHAT_ROW), True)
         # Firmware that sends no supports_chat flag and no capability list still says the type,
         # and "Text Generation" is what a chat model's type is on a live Tiiny.
         self.assertTrue(chat(dict(id='x/y', type='Text Generation')))

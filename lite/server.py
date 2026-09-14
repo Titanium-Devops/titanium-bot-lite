@@ -738,8 +738,8 @@ class Device:
             return False
         capabilities = row.get("capabilities")
         kind = row.get("type")
-        return ((isinstance(capabilities, list) and {"voice", "tts"} & set(capabilities))
-                or (isinstance(kind, str) and kind in ("Text-to-Speech", "TTS")))
+        return bool((isinstance(capabilities, list) and {"voice", "tts"} & set(capabilities))
+                    or (isinstance(kind, str) and kind in ("Text-to-Speech", "TTS")))
 
     def loaded_models(self, timeout=6.0):
         """What the device says it has loaded, asked only once something has already failed.
