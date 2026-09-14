@@ -8,12 +8,25 @@ import urllib.request
 import uuid
 
 
+# Measured on a Tiiny running TiinyOS 0.1.34, 2026-09-14: the device answers /v1/models with
+# type "ASR" and capabilities ["audio"] for a speech model, and type "Text-to-Speech" with
+# capabilities ["voice"] for a speaking one. The longer spelling below is what the written
+# docs showed, and it is kept because no other firmware has been seen.
+ASR_TYPES = ('ASR', 'Speech-to-Text')
+ASR_CAPABILITIES = {'asr', 'audio'}
+TTS_TYPES = ('Text-to-Speech', 'TTS')
+TTS_CAPABILITIES = {'tts', 'voice'}
+
+
 def pick_models(rows):
     valid = [r for r in rows if isinstance(r, dict) and isinstance(r.get('id'), str) and r['id']]
-    asr = next((r['id'] for r in valid if r.get('type') == 'Speech-to-Text' or
-                isinstance(r.get('capabilities'), list) and 'asr' in r['capabilities']), None)
-    tts = next((r['id'] for r in valid if r.get('type') == 'Text-to-Speech'), None)
-    return asr, tts
+
+    def first(types, capabilities):
+        return next((r['id'] for r in valid if r.get('type') in types or
+                     isinstance(r.get('capabilities'), list)
+                     and capabilities & set(r['capabilities'])), None)
+
+    return first(ASR_TYPES, ASR_CAPABILITIES), first(TTS_TYPES, TTS_CAPABILITIES)
 
 
 class Voice:

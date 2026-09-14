@@ -43,6 +43,28 @@ class ModelPickingTests(unittest.TestCase):
         self.assertEqual(pick_models([{'id': 'x', 'capabilities': 'asr'}]), (None, None))
         self.assertEqual(pick_models([]), (None, None))
 
+    def test_a_real_tiiny_answer_picks_both_models(self):
+        # Copied from GET /v1/models on a Tiiny running TiinyOS 0.1.34, 2026-09-14, with the
+        # chat, speech, speaking, embedding and image models all started. The rows the earlier
+        # case uses were written from the docs and no device produces them, which is why voice
+        # found no speech model on real firmware until this fixture was taken.
+        device = [
+            {'id': 'Qwen/Qwen3-8B', 'capabilities': ['main'], 'type': 'Text Generation',
+             'supports_chat': True},
+            {'id': 'Qwen/Qwen3-ASR-1.7B', 'capabilities': ['audio'], 'type': 'ASR',
+             'supports_chat': False},
+            {'id': 'Qwen/Qwen3-Embedding-0.6B', 'capabilities': ['embedding'],
+             'type': 'Text Embedding'},
+            {'id': 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice', 'capabilities': ['voice'],
+             'type': 'Text-to-Speech', 'supports_tts': True},
+            {'id': 'Tongyi-MAI/Z-Image-Turbo', 'capabilities': ['image'], 'type': 'Text-to-Image'},
+        ]
+        self.assertEqual(pick_models(device),
+                         ('Qwen/Qwen3-ASR-1.7B', 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice'))
+        # With no speech model started the device stops listing it, and voice stays off
+        # rather than pointing at the chat model.
+        self.assertEqual(pick_models([r for r in device if r['type'] != 'ASR'])[0], None)
+
 
 class VoiceTests(AppCase):
     def setUp(self):
