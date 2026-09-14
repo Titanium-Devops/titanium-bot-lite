@@ -49,7 +49,6 @@ class Voice:
         return dict(enabled=mode != 'off', mode=mode, asrModel=asr, ttsModel=tts)
 
     def request(self, path, data, content_type='application/json'):
-        from .server import Refusal
         device = self.app.device
         headers = dict(device.headers(), **{'Content-Type': content_type})
         url = device.base + path
@@ -60,10 +59,14 @@ class Voice:
                     if 'json' in response.headers.get('Content-Type', ''):
                         value = json.loads(raw)
                         if value.get('error') or value.get('code', 0) not in (0, 200):
-                            raise Refusal('The device could not finish the speech request.', 503)
+                            raise device.true_refusal('The device could not finish the speech'
+                                                      ' request.', kind='voice')
                     return raw
         except (urllib.error.URLError, OSError, TimeoutError):
-            raise Refusal('The device could not finish the speech request. Please try again.', 503) from None
+            # The speech model can be unloaded between the settings read and the turn, and
+            # "try again" for that is an instruction nobody can follow.
+            raise device.true_refusal('The device could not finish the speech request.'
+                                      ' Please try again.', kind='voice') from None
 
     def expire(self, now=None):
         now = time.time() if now is None else now
@@ -104,7 +107,7 @@ class Voice:
         return path.read_bytes()
 
     def turn(self, audio):
-        from .server import Refusal
+        from .server import NO_MODEL_WORDS, Refusal
         with self.app.lock, self.lock:
             if self.busy:
                 raise Refusal('Wait for Titan to finish speaking.', 409)
@@ -117,7 +120,7 @@ class Voice:
             if not asr:
                 raise Refusal('Load a speech model on the device first', 503)
             if not tts:
-                raise Refusal('Load a text-to-speech model on the device first', 503)
+                raise Refusal(NO_MODEL_WORDS['voice'], 503)
             boundary = uuid.uuid4().hex
             raw = (f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n{asr}\r\n'
                    f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="recording{audio["suffix"]}"\r\n'

@@ -187,7 +187,7 @@ class VoiceTests(AppCase):
         self.turn(status=409)
         self.app.settings['voice']['mode'] = 'push'
         self.models = self.models[:1]
-        self.assertIn('text-to-speech model', self.turn(status=503)['error'])
+        self.assertIn('no voice model is loaded', self.turn(status=503)['error'])
         self.assertFalse(self.app.messages)
 
     def test_tts_loaded_once_then_stopped_at_five_idle_minutes(self):

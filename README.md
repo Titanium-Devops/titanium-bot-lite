@@ -184,7 +184,7 @@ would rather your device could not read any of this.
 
 ## Version numbers
 
-The current version is `0.1.15`, stored in `lite/VERSION`, shown in Settings > About and printed
+The current version is `0.1.16`, stored in `lite/VERSION`, shown in Settings > About and printed
 by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
 `0.1.3`. The middle number changes only when Jason says so.
 
@@ -233,7 +233,7 @@ failed on the next start. Device-side inference may finish after the host exits,
 best-effort voice-model release may not complete; check TiinyOS if a model stays loaded.
 
 Build the farm archive with `python3 scripts/release.py`. It writes
-`dist/titanium-tiiny-bot-0.1.15.tar.gz` and prints its SHA-256, which are the URL target
+`dist/titanium-tiiny-bot-0.1.16.tar.gz` and prints its SHA-256, which are the URL target
 and the checksum the farm manifest carries. Only `lite/`, `brand/` and this README are
 packaged, including `lite/VERSION`; developer dependencies, tests, caches and user data
 are excluded. The archive is reproducible for identical source bytes and executable

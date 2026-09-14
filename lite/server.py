@@ -70,6 +70,17 @@ def normal_base(value):
     return (value or "").strip().rstrip("/")
 
 
+# Measured on a Tiiny on 2026-09-14: /v1/models lists exactly what is loaded, four rows against
+# twenty downloaded, each with its capability. So a device that answers this at all can be asked
+# what it has, and "cannot reach it" stops being a guess.
+NO_MODEL_WORDS = {
+    "chat": ("Your Tiiny is reachable but no chat model is loaded."
+             " Load one in TiinyOS, or run: farm start --load titanium-tiiny-bot"),
+    "voice": ("Your Tiiny is reachable but no voice model is loaded."
+              " Load one in TiinyOS, or run: farm start --load titanium-tiiny-bot"),
+}
+
+
 def model_rows(payload):
     """The model rows, out of whichever envelope the device wrapped them in."""
     rows = payload if isinstance(payload, list) else []
@@ -687,13 +698,17 @@ class Device:
                 busy = error.code in (502, 503, 504) or b"150004" in raw
                 elapsed = time.monotonic() - started
                 if not busy or emitted or elapsed >= self.busy_budget:
-                    raise Refusal("The device is busy or unavailable. Please try again.", 503) from None
+                    # A model that is not loaded answers 404 here, and calling that busy sends
+                    # somebody to wait for a device that is waiting for them.
+                    raise self.true_refusal("The device is busy or unavailable."
+                                            " Please try again.") from None
                 delay = min(2 ** min(attempt, 4) + random.random(), self.busy_budget - elapsed)
                 time.sleep(delay)
                 attempt += 1
             except (urllib.error.URLError, TimeoutError, OSError):
                 self.log.exception("request transport exception path=%s", path)
-                raise Refusal("Cannot reach the device. Check its address and that its model is running.", 503) from None
+                raise self.true_refusal("Cannot reach the device. Check its address and that its"
+                                        " model is running.") from None
             except Exception:
                 self.log.exception("request exception path=%s", path)
                 raise
@@ -708,8 +723,59 @@ class Device:
             return row["supports_chat"] is True
         capabilities = row.get("capabilities")
         kind = row.get("type")
+        # The device calls a chat model's capability "main". The type fallback is for firmware
+        # that sends no capabilities at all, and it has to name both spellings: measured on
+        # 2026-09-14, a chat model's type is "Text Generation" or "Image-Text-to-Text", and
+        # matching only the second told an owner with the first that nothing was loaded.
         return ((isinstance(capabilities, list) and "main" in capabilities)
-                or (isinstance(kind, str) and "Text-to-Text" in kind))
+                or (isinstance(kind, str) and ("Text-to-Text" in kind or kind == "Text Generation")))
+
+    @staticmethod
+    def is_voice_model(row):
+        """A model the device can speak with. Its capability is "voice"; TiinyOS 0.1.34 sends
+        type "Text-to-Speech" beside it, and "tts" is the spelling the written docs used."""
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]:
+            return False
+        capabilities = row.get("capabilities")
+        kind = row.get("type")
+        return ((isinstance(capabilities, list) and {"voice", "tts"} & set(capabilities))
+                or (isinstance(kind, str) and kind in ("Text-to-Speech", "TTS")))
+
+    def loaded_models(self, timeout=6.0):
+        """What the device says it has loaded, asked only once something has already failed.
+
+        Jason, 2026-09-14, from a screenshot: every message came back "Cannot reach the device"
+        while the device was on the desk, reachable, and simply had no chat model loaded. The
+        sentence somebody reads has to be settled by asking, not assumed from the failure.
+
+        No lane and no retry: this is not part of the work, it is the question that decides which
+        sentence is true, and it must not become a second way to fail. None means the device did
+        not answer at all, which is the one case where "cannot reach it" is the honest thing.
+        """
+        if self.model == "echo":
+            return None
+        try:
+            request = urllib.request.Request(self.base + "/models", headers=self.headers())
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read(1024 * 1024))
+        except Exception:  # noqa: BLE001 - a sentence must never be the reason a turn fails.
+            return None
+        rows = payload.get("data") if isinstance(payload, dict) else payload
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    def true_refusal(self, fallback, status=503, kind="chat"):
+        """The refusal to raise for a failed device request, once the device has been asked.
+
+        The old sentence stands whenever the device really did not answer, or answered and does
+        have the kind of model this needed, because then the trouble is something else.
+        """
+        rows = self.loaded_models()
+        if rows is None:
+            return Refusal(fallback, status)
+        wanted = self.is_voice_model if kind == "voice" else self.is_chat_model
+        if any(wanted(row) for row in rows):
+            return Refusal(fallback, status)
+        return Refusal(NO_MODEL_WORDS[kind], 503)
 
     def resolve_model(self, rows=None):
         if self.model != "default":
@@ -868,6 +934,9 @@ class App:
         note = ("Start and stop your device's models here."
                 if loaded is not None else
                 "Your device does not say which models it has loaded, so this marks the one Titan is set to use.")
+        if not any(self.device.is_chat_model(row) for row in rows):
+            # The same state the failed turn reports, in the place somebody goes to fix it.
+            note = NO_MODEL_WORDS["chat"] + ". " + note
         keys = self.endpoint_keys()
         lan = [dict(row, hasKey=bool(keys.get(row["baseUrl"])))
                for row in self.config.get("endpoints", [])]

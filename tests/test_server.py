@@ -363,6 +363,108 @@ class UpstreamTests(AppCase):
         self.assertEqual(chunks, ['visible'])
         self.assertEqual(opened.call_count, 1)
 
+    def models_answer(self, rows):
+        """What the device sends back for /v1/models, which is exactly what it has loaded."""
+        return self.response({'object': 'list', 'data': rows})
+
+    # Recorded from a Tiiny on 2026-09-14: /v1/models lists the loaded models only, each with the
+    # capability the device gives it and a supports_chat flag beside it.
+    CHAT_ROW = dict(id='Qwen/Qwen3-8B', capabilities=['main'], type='Text Generation',
+                    supports_chat=True)
+    VOICE_ROW = dict(id='Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice', capabilities=['voice'],
+                     type='Text-to-Speech', supports_chat=False)
+    EMBED_ROW = dict(id='Qwen/Qwen3-Embedding-0.6B', capabilities=['embedding'],
+                     type='Text Embedding', supports_chat=False)
+
+    def test_a_reachable_tiiny_with_no_chat_model_is_not_called_unreachable(self):
+        """Jason, 2026-09-14, from a screenshot: every message came back "Cannot reach the device"
+        while the device was on the desk and simply had no chat model loaded."""
+        self.app.device.model = 'real-model'
+        dropped = urllib.error.URLError(OSError(errno.ECONNRESET, 'connection reset'))
+        with patch.object(self.app.device.lane, 'hold', side_effect=lambda **kw: contextlib.nullcontext()), \
+                patch('urllib.request.urlopen',
+                      side_effect=[dropped, self.models_answer([self.EMBED_ROW, self.VOICE_ROW])]):
+            with self.assertRaises(Refusal) as caught:
+                self.app.device.request('/chat/completions', {})
+        self.assertEqual(str(caught.exception),
+                         'Your Tiiny is reachable but no chat model is loaded. Load one in'
+                         ' TiinyOS, or run: farm start --load titanium-tiiny-bot')
+        self.assertEqual(caught.exception.status, 503)
+
+    def test_a_device_that_really_did_not_answer_keeps_the_old_sentence(self):
+        self.app.device.model = 'real-model'
+        dropped = urllib.error.URLError(OSError(errno.ECONNRESET, 'connection reset'))
+        with patch.object(self.app.device.lane, 'hold', side_effect=lambda **kw: contextlib.nullcontext()), \
+                patch('urllib.request.urlopen', side_effect=[dropped, dropped]):
+            with self.assertRaises(Refusal) as caught:
+                self.app.device.request('/chat/completions', {})
+        self.assertIn('Cannot reach the device', str(caught.exception))
+
+    def test_a_chat_model_that_is_loaded_leaves_the_sentence_alone(self):
+        """Then the trouble is something else, and saying "no chat model" would send somebody to
+        load one they already have."""
+        self.app.device.model = 'real-model'
+        dropped = urllib.error.URLError(OSError(errno.ECONNRESET, 'connection reset'))
+        with patch.object(self.app.device.lane, 'hold', side_effect=lambda **kw: contextlib.nullcontext()), \
+                patch('urllib.request.urlopen',
+                      side_effect=[dropped, self.models_answer([self.CHAT_ROW])]):
+            with self.assertRaises(Refusal) as caught:
+                self.app.device.request('/chat/completions', {})
+        self.assertIn('Cannot reach the device', str(caught.exception))
+
+    def test_a_model_that_is_not_loaded_is_not_reported_as_busy(self):
+        """A model the device does not have loaded answers 404, and calling that busy sends
+        somebody to wait for a device that is waiting for them."""
+        self.app.device.model = 'real-model'
+        self.app.device.busy_budget = 0
+        gone = urllib.error.HTTPError('http://localhost', 404, 'Not Found', {},
+                                      io.BytesIO(b'{"error": {"type": "model_not_found"}}'))
+        with patch.object(self.app.device.lane, 'hold', side_effect=lambda **kw: contextlib.nullcontext()), \
+                patch('urllib.request.urlopen',
+                      side_effect=[gone, self.models_answer([self.EMBED_ROW])]):
+            with self.assertRaises(Refusal) as caught:
+                self.app.device.request('/chat/completions', {})
+        self.assertIn('no chat model is loaded', str(caught.exception))
+
+    def test_the_question_that_picks_the_sentence_never_fails_a_turn(self):
+        """It is asked after something has already gone wrong, so it has to be incapable of
+        making things worse."""
+        self.assertIsNone(self.app.device.loaded_models())  # The echo model asks nothing.
+        self.app.device.model = 'real-model'
+        with patch('urllib.request.urlopen', side_effect=ValueError('nonsense')):
+            self.assertIsNone(self.app.device.loaded_models())
+        with patch('urllib.request.urlopen', return_value=self.response(b'not json', True)):
+            self.assertIsNone(self.app.device.loaded_models())
+        with patch('urllib.request.urlopen', return_value=self.response({'data': 'wrong'})):
+            self.assertEqual(self.app.device.loaded_models(), [])
+
+    def test_what_counts_as_a_chat_model_and_what_counts_as_a_voice_one(self):
+        chat, voice = self.app.device.is_chat_model, self.app.device.is_voice_model
+        self.assertTrue(chat(self.CHAT_ROW))
+        self.assertFalse(chat(self.VOICE_ROW))
+        self.assertTrue(voice(self.VOICE_ROW))
+        self.assertFalse(voice(self.CHAT_ROW))
+        # Firmware that sends no supports_chat flag and no capability list still says the type,
+        # and "Text Generation" is what a chat model's type is on a live Tiiny.
+        self.assertTrue(chat(dict(id='x/y', type='Text Generation')))
+        self.assertTrue(chat(dict(id='x/y', type='Image-Text-to-Text')))
+        self.assertFalse(chat(dict(id='x/y', type='Text Embedding')))
+        self.assertTrue(voice(dict(id='x/y', type='TTS')))
+        self.assertFalse(chat(dict(id='', capabilities=['main'])))
+
+    def test_the_model_page_says_the_same_thing_as_the_failed_turn(self):
+        """The state belongs where somebody goes to fix it, not only in the reply that failed."""
+        self.app.device.model = 'real-model'
+        with patch.object(self.app.device, 'request',
+                          return_value={'data': [self.EMBED_ROW, self.VOICE_ROW]}):
+            payload = self.app.models_payload()
+        self.assertTrue(payload['note'].startswith(
+            'Your Tiiny is reachable but no chat model is loaded.'))
+        with patch.object(self.app.device, 'request',
+                          return_value={'data': [self.CHAT_ROW, self.EMBED_ROW]}):
+            payload = self.app.models_payload()
+        self.assertNotIn('no chat model is loaded', payload['note'])
+
     def test_retry_budget_and_errors_never_disclose_key(self):
         self.app.device.model = "real-model"
         self.app.device.busy_budget = 0
@@ -370,7 +472,10 @@ class UpstreamTests(AppCase):
         with patch.object(self.app.device.lane, 'hold', side_effect=lambda **kw: contextlib.nullcontext()), patch('urllib.request.urlopen', side_effect=error) as opened:
             with self.assertRaises(Refusal) as caught:
                 self.app.device.request('/models')
-        self.assertEqual(opened.call_count, 1)
+        # One attempt, and then the question that decides which sentence is true: what does the
+        # device have loaded? It fails here too, so the old sentence stands.
+        self.assertEqual(opened.call_count, 2)
+        self.assertIn('busy or unavailable', str(caught.exception))
         self.assertNotIn('test-private-key', str(caught.exception))
 
 
