@@ -245,3 +245,47 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(Refusal):
                         device.chat([], lambda token: None)
                     self.assertIsNone(device.resolved_model)
+
+class DefaultDataDirTests(unittest.TestCase):
+    def test_falls_back_under_home_when_the_app_folder_cannot_be_written(self):
+        import os, tempfile
+        from unittest import mock
+        from lite import server
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as app:
+            os.chmod(app, 0o500)
+            cwd = os.getcwd()
+            try:
+                os.chdir(app)
+                with mock.patch.dict(os.environ, {"HOME": home}):
+                    chosen = server.default_data_dir()
+            finally:
+                os.chdir(cwd)
+                os.chmod(app, 0o700)
+        self.assertEqual(chosen, os.path.join(home, ".titanium-tiiny-bot"))
+
+    def test_uses_data_beside_the_app_when_it_can(self):
+        import os, tempfile
+        from lite import server
+        with tempfile.TemporaryDirectory() as app:
+            cwd = os.getcwd()
+            try:
+                os.chdir(app)
+                self.assertEqual(server.default_data_dir(), "data")
+            finally:
+                os.chdir(cwd)
+
+class EchoNeedsNoDeviceTests(unittest.TestCase):
+    def test_echo_model_with_no_base_never_searches_for_a_device(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from lite import server, device
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(device, "find_base", side_effect=AssertionError("searched")):
+                with mock.patch.dict(os.environ, {"TIINY_BASE": "", "TIINY_MODEL": ""}, clear=False):
+                    for name in ("TIINY_BASE", "TIINY_MODEL"):
+                        os.environ.pop(name, None)
+                    config = server.load_config(Path(root), {"model": "echo"})
+        self.assertEqual(config["model"], "echo")
+        self.assertTrue(config["base"].startswith("http://127.0.0.1:1"))
+

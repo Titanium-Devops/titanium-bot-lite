@@ -169,6 +169,10 @@ def load_config(root, overrides=None):
         if "TIINY_" + field.upper() in os.environ:
             values[field] = os.environ["TIINY_" + field.upper()]
     values.update({k: v for k, v in (overrides or {}).items() if v is not None})
+    if isinstance(values.get("base"), str) and not values["base"].strip() and values.get("model") == "echo":
+        # The echo model answers from memory and never calls anything, so a selfcheck or a
+        # test with no Tiiny in the room needs no device search and no address at all.
+        values["base"] = "http://127.0.0.1:1/v1"
     if isinstance(values.get("base"), str) and not values["base"].strip():
         from . import device as tiiny_device
         values["base"] = tiiny_device.find_base()
@@ -1877,6 +1881,24 @@ def stop_running(root):
             print("Titanium Tiiny Bot is not running.")
 
 
+def default_data_dir():
+    """./data beside the app when that can be written, else a folder under the home directory.
+
+    The farm's submission check runs an app from a read-only mount with only HOME writable,
+    and a person may install into a folder they cannot write; both used to end in "Cannot read
+    configuration" with nothing to say why.
+    """
+    here = Path("./data")
+    try:
+        here.mkdir(parents=True, exist_ok=True)
+        probe = here / ".write-check"
+        probe.touch()
+        probe.unlink()
+        return str(here)
+    except OSError:
+        return str(Path.home() / ".titanium-tiiny-bot")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Titanium Tiiny Bot")
     parser.add_argument("--bind", "--host", dest="bind")
@@ -1895,7 +1917,10 @@ def main():
     # The saved endpoints are a list the owner builds in Settings, not a flag,
     # so they are the one default with no command-line override.
     overrides = {k: getattr(args, k) for k in ("base", "model", "port", "bind", "name", "mcp", "key")}
-    root = Path(args.data_dir or os.getenv("TIINY_DATA_DIR", "./data")).resolve()
+    if args.selfcheck and not (args.base or args.model or os.getenv("TIINY_BASE") or os.getenv("TIINY_MODEL")):
+        # A bare --selfcheck measures the app, not the device: the farm runs it offline.
+        overrides["model"] = "echo"
+    root = Path(args.data_dir or os.getenv("TIINY_DATA_DIR") or default_data_dir()).resolve()
     if args.stop:
         try:
             stop_running(root)
