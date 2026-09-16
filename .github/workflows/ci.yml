@@ -31,6 +31,35 @@ jobs:
         # The runners ship whatever they ship, and one test builds a wheel in process.
         run: python -m pip install --upgrade "setuptools>=77" wheel
 
+      - name: What a busy port reports here
+        # TEMPORARY. The Windows job says "cannot bind" where it should say "port is
+        # busy", and the errno behind that is not written down anywhere reliable.
+        if: always()
+        run: |
+          python -c "
+          import errno, socket
+          listener = socket.socket()
+          listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          listener.bind(('127.0.0.1', 0))
+          listener.listen()
+          port = listener.getsockname()[1]
+          try:
+              probe = socket.create_connection(('127.0.0.1', port), timeout=0.2)
+              probe.close()
+              print('connect to the listener: ok')
+          except OSError as e:
+              print('connect to the listener FAILED', e.errno, getattr(e, 'winerror', None), e)
+          for bind_to in ('0.0.0.0', '127.0.0.1'):
+              second = socket.socket()
+              try:
+                  second.bind((bind_to, port))
+                  print('bind', bind_to, 'SUCCEEDED beside the listener')
+              except OSError as e:
+                  print('bind', bind_to, 'errno', e.errno, 'winerror', getattr(e, 'winerror', None), e)
+              second.close()
+          print('EADDRINUSE', errno.EADDRINUSE, 'WSAEADDRINUSE', getattr(errno, 'WSAEADDRINUSE', None), 'WSAEACCES', getattr(errno, 'WSAEACCES', None))
+          "
+
       - name: Unit tests
         run: python -m unittest discover -s tests
 
