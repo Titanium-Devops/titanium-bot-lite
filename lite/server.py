@@ -36,11 +36,11 @@ from . import mcp as connector
 from .routines import Scheduler, read_routines
 
 CONSOLE = Path(__file__).parent / "console"
-TOOLS = json.loads((Path(__file__).parent / "tools.json").read_text())
+TOOLS = json.loads((Path(__file__).parent / "tools.json").read_text(encoding="utf-8"))
 BASE_PROMPT = "You are Titan, the local assistant in Titanium Tiiny Bot. Speak in plain words."
 SEEDS = Path(__file__).parent / "seeds"
-PERSONA = (SEEDS / "persona.md").read_text()
-HANDBOOK = (SEEDS / "handbook-what-i-can-do/SKILL.md").read_text().split("---", 2)[2].strip()
+PERSONA = (SEEDS / "persona.md").read_text(encoding="utf-8")
+HANDBOOK = (SEEDS / "handbook-what-i-can-do/SKILL.md").read_text(encoding="utf-8").split("---", 2)[2].strip()
 
 
 
@@ -160,7 +160,7 @@ def load_config(root, overrides=None):
     path = root / "config.json"
     if not path.exists():
         atomic_write(path, json.dumps(DEFAULTS, indent=2) + "\n")
-    saved = json.loads(path.read_text())
+    saved = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(saved, dict) or set(saved) - DEFAULTS.keys():
         raise Refusal("Use only base, model, port, bind, name, endpoints and mcp in config.json; keep the key in keys.json.")
     values = DEFAULTS | saved
@@ -169,7 +169,7 @@ def load_config(root, overrides=None):
     if not keys.exists():
         atomic_write(keys, "{}\n", 0o600)
     keys.chmod(0o600)
-    stored = json.loads(keys.read_text())
+    stored = json.loads(keys.read_text(encoding="utf-8"))
     if not isinstance(stored, dict):
         raise Refusal("Use an object with an apiKey field in keys.json.")
     endpoint_keys = stored.get("endpoints")
@@ -442,7 +442,7 @@ def read_skills(root):
 
 def build_prompt(root, text="", name=None, recall=None):
     settings_file = Path(root) / "settings.json"
-    preferences = json.loads(settings_file.read_text()) if settings_file.exists() else {}
+    preferences = json.loads(settings_file.read_text(encoding="utf-8")) if settings_file.exists() else {}
     skills = read_skills(root)
     catalog = "\n".join(f'{s["name"]}: {s["description"]} ({s["path"]})' + (" [disabled]" if not s["enabled"] else "") for s in skills)
     return "\n\n".join((BASE_PROMPT, read_persona(root),
@@ -820,13 +820,13 @@ class App:
         for seed in SEEDS.glob("*/SKILL.md"):
             destination = self.root / "skills" / seed.parent.name / "SKILL.md"
             if not destination.exists():
-                atomic_write(destination, seed.read_text())
+                atomic_write(destination, seed.read_text(encoding="utf-8"))
         (self.root / "keys.json").chmod(0o600)
         self.settings = dict(theme="dusk", background="titan-nebula", language="en", botName="Titan",
                              askBefore="", talkEnabled=False, micDeviceId="", voice=dict(
                                  enabled=False, mode="off", vendor="device", voice="", minutesToday=0))
         if (self.root / "settings.json").exists():
-            saved = json.loads((self.root / "settings.json").read_text())
+            saved = json.loads((self.root / "settings.json").read_text(encoding="utf-8"))
             self.settings.update({k: v for k, v in saved.items() if k in self.settings})
         self.settings["botName"] = self.config["name"]
         self.device = Device(self.root, self.config["base"], self.config["key"], self.config["model"])
@@ -837,7 +837,7 @@ class App:
         self.recall = {}
         self.messages = []
         if (self.root / "transcripts/main.json").exists():
-            self.messages = json.loads((self.root / "transcripts/main.json").read_text())
+            self.messages = json.loads((self.root / "transcripts/main.json").read_text(encoding="utf-8"))
         if not (self.root / "transcripts/main.json").exists():
             self.messages.append(self.message("titan", "I’m " + self.settings["botName"] + ", your assistant on this device. What should I call you?"))
             self.save_messages()
@@ -900,14 +900,14 @@ class App:
     def endpoint_keys(self):
         """The saved endpoint keys. This answer never leaves the process."""
         path = self.root / "keys.json"
-        stored = json.loads(path.read_text()) if path.exists() else {}
+        stored = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         saved = stored.get("endpoints") if isinstance(stored, dict) else None
         return saved if isinstance(saved, dict) else {}
 
     def save_endpoint_key(self, base, key):
         """One 0600 file holds every key, and none of them reaches the page."""
         path = self.root / "keys.json"
-        stored = json.loads(path.read_text()) if path.exists() else {}
+        stored = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         if not isinstance(stored, dict):
             raise Refusal("Use an object with an apiKey field in keys.json.")
         saved = stored.get("endpoints")
@@ -1115,7 +1115,7 @@ class App:
             raise Refusal("The device could not release its speech model. Please try again.", 503)
         with self.lock:
             path = self.root / "config.json"
-            saved = DEFAULTS | json.loads(path.read_text()) | changes
+            saved = DEFAULTS | json.loads(path.read_text(encoding="utf-8")) | changes
             text = {k: v for k, v in changes.items() if k != "endpoints"}
             # An empty base is legal and means "find the device", which is the
             # shipped default and the way back from another computer.
@@ -1128,7 +1128,7 @@ class App:
             # the shipped default, so there is nothing to validate in that case.
             if str(saved.get("base") or "").strip():
                 Device(self.root, saved["base"], self.device.key, saved["model"])
-            previous = path.read_text()
+            previous = path.read_text(encoding="utf-8")
             atomic_write(path, json.dumps(saved, indent=2) + "\n")
             try:
                 self.config = load_config(self.root, self.overrides)
@@ -1174,7 +1174,7 @@ class App:
                 for path in (self.root / "memory").rglob("*.md"):
                     if path.is_symlink() or not path.resolve().is_relative_to(self.root):
                         continue
-                    lines = [line for line in path.read_text().splitlines()
+                    lines = [line for line in path.read_text(encoding="utf-8").splitlines()
                              if " ".join(re.sub(r"^-\s+\([0-9-]+\)\s+", "", line).split()).lower() != name]
                     atomic_write(path, "\n".join(lines) + "\n")
             elif kind == "skill" and verb in ("enable", "disable", "run"):
@@ -1340,7 +1340,7 @@ class App:
                 path = self.root / ("memory/profile.md" if tier == "profile" else f"memory/log/{datetime.now():%Y-%m}.md")
                 if path.is_symlink() or not path.resolve().is_relative_to(self.root):
                     raise Refusal("The memory path is not safe.")
-                content = path.read_text() if path.exists() else '# Memory log\n<!-- - (YYYY-MM-DD) fact -->\n'
+                content = path.read_text(encoding="utf-8") if path.exists() else '# Memory log\n<!-- - (YYYY-MM-DD) fact -->\n'
                 atomic_write(path, content.rstrip() + f"\n- ({datetime.now():%Y-%m-%d}) {fact}\n")
                 self.poke()
                 return "Remembered: " + fact
@@ -1366,7 +1366,7 @@ class App:
                 else:
                     if not path.is_file():
                         raise Refusal("That routine was not found.", 404)
-                    item = json.loads(path.read_text())
+                    item = json.loads(path.read_text(encoding="utf-8"))
                 if action == "delete":
                     path.unlink()
                     (folder / "runs.json").unlink(missing_ok=True)
@@ -1499,14 +1499,14 @@ class App:
                             continue
                         conversation = "routine-" + ident
                         transcript_path = self.root / "transcripts" / (conversation + ".json")
-                        transcript = json.loads(transcript_path.read_text()) if transcript_path.exists() else []
+                        transcript = json.loads(transcript_path.read_text(encoding="utf-8")) if transcript_path.exists() else []
                         user = self.message("you", routine["prompt"])
                         user["conversationName"] = routine["name"]
                         transcript.append(user)
                         run = dict(id=uuid.uuid4().hex, trigger="cron", startedAt=int(time.time() * 1000),
                                    finishedAt=None, status="running", detail="", conversationId=conversation)
                         runs_path = path.parent / "runs.json"
-                        runs = json.loads(runs_path.read_text()) if runs_path.exists() else []
+                        runs = json.loads(runs_path.read_text(encoding="utf-8")) if runs_path.exists() else []
                         runs = (runs + [run])[-20:]
                         atomic_write(runs_path, json.dumps(runs))
                         routine["lastRunAt"] = run["startedAt"]
@@ -1826,7 +1826,7 @@ class Handler(BaseHTTPRequestHandler):
                 target = app.root / "transcripts" / (conversation + ".json")
                 if not target.is_file() or target.is_symlink():
                     raise Refusal("That conversation was not found.", 404)
-                transcript = json.loads(target.read_text())
+                transcript = json.loads(target.read_text(encoding="utf-8"))
             limit = max(1, min(200, int(params.get("limit", ["100"])[0])))
             with app.lock:
                 end = len(transcript)
@@ -1910,7 +1910,7 @@ def close_for_exit(app):
 def running_pid(root):
     # Keep the lock inode stable; deleting/recreating it could admit two owners.
     fd = os.open(root / ".lite.lock", os.O_RDWR | os.O_CREAT | O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "r+") as lock:
+    with os.fdopen(fd, "r+", encoding="utf-8") as lock:
         try:
             lock_nb(lock)
         except BlockingIOError:
@@ -1930,12 +1930,12 @@ def stop_running(root):
     except FileNotFoundError:
         print("Titanium Tiiny Bot is not running.")
         return
-    with os.fdopen(fd, "r+") as lock:
+    with os.fdopen(fd, "r+", encoding="utf-8") as lock:
         try:
             lock_nb(lock)
         except BlockingIOError:
             try:
-                pid = int(pid_file.read_text())
+                pid = int(pid_file.read_text(encoding="utf-8"))
                 if pid <= 1:
                     raise ValueError()
             except (OSError, ValueError):

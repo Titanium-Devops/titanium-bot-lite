@@ -247,7 +247,10 @@ class ReaderAndQueueTests(AppCase):
             raise
         result = subprocess.run([sys.executable, '-m', 'lite', '--selfcheck',
                                  '--data-dir', str(self.app.root / 'selfcheck')],
-                                cwd=TEST_ROOT.parents[1], capture_output=True, text=True, timeout=15)
+                                cwd=TEST_ROOT.parents[1], capture_output=True, text=True, timeout=120)
+        # 120s is a hang guard, not a measurement. What this test actually asserts about
+        # speed is coldStartMs below, taken inside the process; the wall clock around it
+        # also holds interpreter startup on whatever shared runner this landed on.
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
         self.assertTrue(report['ok'])
