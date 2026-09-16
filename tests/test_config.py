@@ -130,6 +130,10 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual((code, out, err), (1, '', f'Port 8123 is busy; choose another with --port or in {self.root / "config.json"}.\n'))
 
     def test_real_loopback_listener_refuses_cli(self):
+        # A wall clock around a child process is a hang guard, not a measurement.
+        # Where this suite means to assert a time budget it says so with assertLess,
+        # and those live in ShutdownTests. This number only has to be longer than a
+        # cold shared runner takes to start an interpreter, which is not 5 seconds.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
@@ -141,7 +145,7 @@ class ConfigTests(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, '-m', 'lite', '--port', str(port), '--bind', '0.0.0.0',
                  '--model', 'echo', '--data-dir', str(self.root)],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=120,
                 # A child process cannot see the patched search, and this test is
                 # about refusing a busy port, not about finding a device.
                 env=os.environ | {'TIINY_BASE': 'http://192.0.2.10/v1'},

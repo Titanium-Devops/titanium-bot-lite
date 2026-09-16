@@ -516,7 +516,7 @@ class RealHTTPTests(AppCase):
         if not node:
             self.skipTest('Node is needed only to test the actual JavaScript adapter')
         result = subprocess.run([node, 'tests/adapter-contract.cjs', base, sys.executable],
-                                cwd=TEST_ROOT.parents[1], capture_output=True, text=True, timeout=30)
+                                cwd=TEST_ROOT.parents[1], capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_door_resource_budget_and_events_over_urllib(self):
