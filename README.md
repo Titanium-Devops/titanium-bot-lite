@@ -3,7 +3,7 @@
 A small, local assistant for the Tiiny AI Pocket Lab, brought to you by [Titanium Bot](https://titanium.bot).
 Built for [Tiiny](https://tiiny.ai).
 
-Titan talks to the model on your pocket device. This first version runs on a Mac or Linux computer
+Titan talks to the model on your pocket device. It runs on a Mac, Linux or Windows computer
 beside it and gives you chat, file tools, saved memories, an editable persona, a folder of skills and scheduled routines.
 You can talk to it out loud, using the speech models on your device. Settings > Model lists the
 models on your device, starts and stops them, and can point Titan at another computer on your
@@ -14,8 +14,8 @@ its own, is at https://titanium.bot.
 
 ## Install Titan
 
-This takes about ten minutes. You need your Tiiny with a chat model already running, and a Mac or
-Linux computer on the same network. Keep that computer awake while you use Titan. No cloud account
+This takes about ten minutes. You need your Tiiny with a chat model already running, and a Mac,
+Linux or Windows computer on the same network. Keep that computer awake while you use Titan. No cloud account
 or paid service is needed.
 Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/) first; on Linux
 your software manager can install it. Open Terminal and type `python3 --version` to check. Then
@@ -69,7 +69,16 @@ Then, unless `farm device` already asked you:
    ```
 
    The key stays hidden as you paste. Do not put it in chat or a screenshot. These commands work
-   in the usual Mac and Linux terminals. Set them again if you open a new terminal.
+   in the usual Mac and Linux terminals. In Windows PowerShell, set the same two values like this:
+
+   ```powershell
+   $env:TIINY_BASE = 'http://192.168.1.50/v1'   # your device's address
+   $env:TIINY_KEY = Read-Host 'Paste your API key' -AsSecureString |
+       ForEach-Object { [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+           [Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) }
+   ```
+
+   Set them again if you open a new terminal.
 2. Start Titan with the command for the way you installed it.
 3. On this computer, open `http://localhost:7788`. On your phone, join the same Wi-Fi and open
    `http://YOUR-COMPUTER-ADDRESS:7788`, replacing `YOUR-COMPUTER-ADDRESS` with the computer's local
@@ -184,7 +193,7 @@ would rather your device could not read any of this.
 
 ## Version numbers
 
-The current version is `0.1.16`, stored in `lite/VERSION`, shown in Settings > About and printed
+The current version is `0.1.17`, stored in `lite/VERSION`, shown in Settings > About and printed
 by `python3 -m lite --version`. Every change increments the last number: `0.1.1`, `0.1.2`,
 `0.1.3`. The middle number changes only when Jason says so.
 
@@ -233,7 +242,7 @@ failed on the next start. Device-side inference may finish after the host exits,
 best-effort voice-model release may not complete; check TiinyOS if a model stays loaded.
 
 Build the farm archive with `python3 scripts/release.py`. It writes
-`dist/titanium-tiiny-bot-0.1.16.tar.gz` and prints its SHA-256, which are the URL target
+`dist/titanium-tiiny-bot-0.1.17.tar.gz` and prints its SHA-256, which are the URL target
 and the checksum the farm manifest carries. Only `lite/`, `brand/` and this README are
 packaged, including `lite/VERSION`; developer dependencies, tests, caches and user data
 are excluded. The archive is reproducible for identical source bytes and executable

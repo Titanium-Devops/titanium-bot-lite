@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import fcntl
 import signal
 import copy
 import errno
@@ -32,6 +31,7 @@ from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import IMPORT_STARTED, __version__
+from .filelock import O_NOFOLLOW, lock_nb
 from . import mcp as connector
 from .routines import Scheduler, read_routines
 
@@ -1033,11 +1033,21 @@ class App:
         return dict(live=self.live())
 
     def budget(self):
-        import resource
-        import sys
-        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        rss_mb = rss / (1024 * 1024 if sys.platform == "darwin" else 1024)
-        return dict(rssMb=round(rss_mb, 2), firstPaintKb=round(first_paint_bytes() / 1000, 2),
+        rss_mb = 0.0
+        try:
+            import resource
+        except ImportError:
+            # ponytail: Windows has no resource module, and the only stdlib way to the
+            # same number is a ctypes call into psapi, which the farm's archive scanner
+            # forbids outright. High-water RSS is one label on the Settings page and one
+            # line of the selfcheck, so report 0 there and say so rather than grow a
+            # native dependency for it. Everything else on the page is measured as ever.
+            pass
+        else:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss_mb = rss / (1024 * 1024 if sys.platform == "darwin" else 1024)
+        return dict(rssMb=round(rss_mb, 2), rssMeasured=rss_mb > 0,
+                    firstPaintKb=round(first_paint_bytes() / 1000, 2),
                     coldStartMs=round(self.cold_start_ms, 2))
 
     def get_settings(self):
@@ -1899,10 +1909,10 @@ def close_for_exit(app):
 @contextmanager
 def running_pid(root):
     # Keep the lock inode stable; deleting/recreating it could admit two owners.
-    fd = os.open(root / ".lite.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    fd = os.open(root / ".lite.lock", os.O_RDWR | os.O_CREAT | O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "r+") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_nb(lock)
         except BlockingIOError:
             raise Refusal("Titanium Tiiny Bot is already running with this data directory.") from None
         pid = root / "lite.pid"
@@ -1916,13 +1926,13 @@ def running_pid(root):
 def stop_running(root):
     pid_file = root / "lite.pid"
     try:
-        fd = os.open(root / ".lite.lock", os.O_RDWR | os.O_NOFOLLOW)
+        fd = os.open(root / ".lite.lock", os.O_RDWR | O_NOFOLLOW)
     except FileNotFoundError:
         print("Titanium Tiiny Bot is not running.")
         return
     with os.fdopen(fd, "r+") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_nb(lock)
         except BlockingIOError:
             try:
                 pid = int(pid_file.read_text())
@@ -1932,12 +1942,15 @@ def stop_running(root):
                 raise Refusal("Cannot read the running process ID; try --stop again.") from None
             try:
                 os.kill(pid, signal.SIGINT)
-            except ProcessLookupError:
+            except OSError:
+                # Windows has no signals to deliver: any value here is TerminateProcess,
+                # which fails outright when the process has already gone or belongs to
+                # another session. The wait below decides whether it really stopped.
                 pass
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_nb(lock)
                     break
                 except BlockingIOError:
                     time.sleep(0.02)

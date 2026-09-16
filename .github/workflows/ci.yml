@@ -1,0 +1,35 @@
+name: ci
+
+# 0.1.16 shipped an `import fcntl` and could not start on Windows at all, because
+# nothing here had ever been run on Windows. The matrix below is the fix for that.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The manifest asks for 3.11 and that is what the farm looks for.
+          python-version: "3.11"
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Offline selfcheck
+        # A bare --selfcheck answers on the echo model, so this needs no Tiiny and no
+        # network: it measures that the app imports, binds, serves and replies.
+        run: python -m lite --selfcheck

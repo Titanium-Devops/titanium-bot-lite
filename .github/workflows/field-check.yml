@@ -1,0 +1,90 @@
+name: field-check
+
+# The walk a stranger on Windows actually takes: install the farm CLI from PyPI, let it
+# fetch the published release out of the catalog, start it, and see the app answer. It
+# only passes once the farm catalog lists the version being asked for, so it is run by
+# hand after a release rather than on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version the catalog should hand out; leave empty to accept whatever is listed"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  stranger:
+    name: install from the farm and serve
+    runs-on: windows-latest
+    # No checkout, deliberately. Nothing in this job may come from the repository, or it
+    # stops being the stranger's path and starts being our own tree again.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the farm CLI
+        run: pip install tiinyapp-farm
+
+      - name: Install Titanium Tiiny Bot from the catalog
+        env:
+          WANT: ${{ inputs.version }}
+        run: |
+          farm install titanium-tiiny-bot --json -y | tee install.json
+          python - <<'PY'
+          import json, os, sys
+          answer = json.load(open("install.json"))
+          if not answer.get("installed"):
+              sys.exit("the farm did not install the app: " + json.dumps(answer))
+          want = os.environ.get("WANT", "").strip()
+          if want and answer.get("version") != want:
+              sys.exit("the catalog handed out %s, not %s" % (answer.get("version"), want))
+          print("installed", answer.get("version"), "at", answer.get("path"))
+          PY
+
+      - name: Start it on a spare port
+        # --no-model-check because a GitHub runner has no Tiiny on it. The question this
+        # job asks is only whether the process imports and serves on Windows.
+        run: farm start titanium-tiiny-bot --port 7911 --json --no-model-check | tee start.json
+
+      - name: It answers on the health URL
+        run: |
+          python - <<'PY'
+          import json, sys, time, urllib.request
+          started = json.load(open("start.json"))
+          if not started.get("running"):
+              sys.exit("the farm did not start the app: " + json.dumps(started))
+          url = started["url"].rstrip("/") + "/api/health"
+          health, last = None, None
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as answer:
+                      health = json.load(answer)
+                  break
+              except Exception as problem:
+                  last = problem
+                  time.sleep(1)
+          if health is None:
+              sys.exit("%s never answered: %s" % (url, last))
+          print(json.dumps(health, indent=2))
+          if health.get("app") != "titanium-bot-lite":
+              sys.exit("%s answered for something else: %s" % (url, health.get("app")))
+          print("Titanium Tiiny Bot is serving on Windows at", url)
+          PY
+
+      - name: The app's own log, whatever happened
+        if: always()
+        run: cat "$HOME/tiinyapps/titanium-tiiny-bot/farm.log" || echo "no farm log to show"
+
+      - name: Stop and remove it
+        if: always()
+        run: |
+          farm stop titanium-tiiny-bot --json || true
+          farm remove titanium-tiiny-bot || true
