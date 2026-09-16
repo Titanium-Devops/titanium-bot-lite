@@ -18,6 +18,7 @@ import queue
 import random
 import re
 import socket
+import socketserver
 import threading
 import time
 import urllib.error
@@ -243,9 +244,12 @@ def read_memories(root):
     return list(facts.values())
 
 
-# A busy port has two spellings: errno.EADDRINUSE everywhere, and the WSA number on
-# Windows, which Python passes through untranslated.
-ADDRESS_IN_USE = frozenset({errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)})
+# A busy port has more than one spelling. POSIX says EADDRINUSE; Windows has its own
+# numbers, which Python passes through untranslated, and answers WSAEACCES as well as
+# WSAEADDRINUSE depending on how the other socket was opened. The WSA names exist only
+# on Windows, so a plain EACCES from a privileged port on POSIX is still not this.
+ADDRESS_IN_USE = frozenset({errno.EADDRINUSE} | {
+    getattr(errno, name) for name in ("WSAEADDRINUSE", "WSAEACCES") if hasattr(errno, name)})
 
 MEMORY_CAP = 500
 MEMORY_RECENT = 40
@@ -1674,6 +1678,21 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
+    def server_bind(self):
+        """Bind without asking the network who we are.
+
+        http.server's own server_bind calls socket.getfqdn on the bind address, which is
+        a reverse DNS lookup, and startup blocks for as long as the resolver takes. On a
+        GitHub macOS runner that measured 35 seconds against a 5 second cold-start
+        budget, and a laptop on a corporate network or a slow VPN is the same machine.
+        server_name only ever fills CGI variables this app does not serve, so the
+        address it was given will do.
+        """
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
     def __init__(self, address, app):
         self.app = app
         super().__init__(address, Handler)
@@ -1897,6 +1916,22 @@ def lite_is_running(port):
     return False
 
 
+def something_is_listening(port, timeout=0.2):
+    """Does anything already accept a connection on this port?
+
+    Asked before binding, because a wildcard bind can succeed beside a loopback listener
+    on macOS and then quietly serve nobody. Asked again after a bind fails, because the
+    errno that failure carries is not portable and the port is a steadier witness.
+    """
+    for host in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def close_for_exit(app):
     """Give cleanup one shared second; device I/O must not delay process exit.
 
@@ -2052,18 +2087,15 @@ def run_cli(args, root, overrides, config):
             close_for_exit(app)
         raise SystemExit(code)
     try:
-        # A wildcard bind can succeed beside a loopback listener on macOS.
-        for host in ("127.0.0.1", "::1"):
-            try:
-                with socket.create_connection((host, config["port"]), timeout=0.2):
-                    pass
-            except OSError:
-                continue
+        if something_is_listening(config["port"]):
             raise OSError(errno.EADDRINUSE, "Loopback port is busy")
         server = Server((config["bind"], config["port"]), app)
     except OSError as error:
         close_for_exit(app)
-        if error.errno in ADDRESS_IN_USE:
+        # The errno list is a shortcut; the port itself is the witness. Ask it again when
+        # the number is one we do not recognise, so a Windows code nobody has written down
+        # yet still gets the sentence that says which port to move off.
+        if error.errno in ADDRESS_IN_USE or something_is_listening(config["port"]):
             if lite_is_running(config["port"]):
                 print(f"Titanium Tiiny Bot is already running at http://localhost:{config['port']}")
                 return

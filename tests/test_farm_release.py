@@ -155,7 +155,9 @@ class ReleaseTests(unittest.TestCase):
                            'vendor/private': 'no', 'data/keys.json': 'secret',
                            'lite/__pycache__/cached.pyc': 'no', 'lite/data/secret': 'no',
                            'tests/test.py': 'no'}.items():
-            (self.root / name).write_text(data, encoding='utf-8')
+            # newline='' so the fixture is the bytes it says it is. Text mode on Windows
+            # turns every \n into \r\n, and this test is about the bytes the builder copies.
+            (self.root / name).write_text(data, encoding='utf-8', newline='')
 
     def build(self):
         with contextlib.redirect_stdout(io.StringIO()):
