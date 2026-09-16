@@ -22,7 +22,15 @@ class ConfigTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
-        env = patch.dict(os.environ, {'ONELANE_DIR': str(self.root / '.onelane')}, clear=True)
+        # clear=True so no ambient TIINY_* can reach the code under test. The few
+        # variables the operating system itself needs to start a process have to survive
+        # it: a Windows child with no SystemRoot cannot initialise Winsock, so every
+        # socket call in it fails with WSAEPROVIDERFAILEDINIT before this app runs a line,
+        # and a test about refusing a busy port measured that instead.
+        keep = {name: os.environ[name] for name in
+                ('SystemRoot', 'windir', 'SystemDrive', 'PATH', 'PATHEXT', 'COMSPEC', 'TEMP', 'TMP')
+                if name in os.environ}
+        env = patch.dict(os.environ, keep | {'ONELANE_DIR': str(self.root / '.onelane')}, clear=True)
         env.start()
         self.addCleanup(env.stop)
         # An empty base in config.json means "find the device". Stub the search
