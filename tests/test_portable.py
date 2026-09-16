@@ -72,11 +72,18 @@ class PortabilityTests(unittest.TestCase):
             # Only the module body. An import nested in a try or a function is guarded
             # by construction, which is exactly how filelock.py reaches fcntl.
             for node in tree.body:
-                if not isinstance(node, ast.Import):
+                # Both spellings. `from fcntl import flock` is the same
+                # ModuleNotFoundError on Windows as `import fcntl`, and reads as
+                # innocent enough to be written again by somebody working on a Mac.
+                if isinstance(node, ast.Import):
+                    named = [item.name for item in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    named = [node.module or ""]
+                else:
                     continue
-                for item in node.names:
-                    if item.name.split(".")[0] in POSIX_ONLY:
-                        guilty.append("%s:%d: import %s" % (path.name, node.lineno, item.name))
+                for name in named:
+                    if name.split(".")[0] in POSIX_ONLY:
+                        guilty.append("%s:%d: %s" % (path.name, node.lineno, name))
         self.assertEqual(guilty, [], "unguarded POSIX-only imports:\n" + "\n".join(guilty))
 
     def test_the_seed_files_are_not_decodable_by_accident(self):
