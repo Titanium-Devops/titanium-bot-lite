@@ -1916,14 +1916,24 @@ def lite_is_running(port):
     return False
 
 
-def something_is_listening(port, timeout=0.2):
-    """Does anything already accept a connection on this port?
+# A bind that names no particular interface. Anything else names one, and only that one
+# is this app's business.
+WILDCARD_BINDS = frozenset({"", "*", "0.0.0.0", "::"})
+
+
+def something_is_listening(bind, port, timeout=0.2):
+    """Does anything already accept a connection where this app wants to serve?
 
     Asked before binding, because a wildcard bind can succeed beside a loopback listener
-    on macOS and then quietly serve nobody. Asked again after a bind fails, because the
-    errno that failure carries is not portable and the port is a steadier witness.
+    on macOS and then quietly serve nobody at localhost. Asked again when a bind fails,
+    because the errno that failure carries is not portable and the address is a steadier
+    witness than the number.
+
+    A wildcard asks both loopbacks, which is the case above. An address that names one
+    interface asks only itself: a stranger's listener on 127.0.0.1 is not this app's
+    business and must neither keep it from starting nor be reported as its busy port.
     """
-    for host in ("127.0.0.1", "::1"):
+    for host in ("127.0.0.1", "::1") if bind in WILDCARD_BINDS else (bind,):
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 return True
@@ -2087,7 +2097,7 @@ def run_cli(args, root, overrides, config):
             close_for_exit(app)
         raise SystemExit(code)
     try:
-        if something_is_listening(config["port"]):
+        if something_is_listening(config["bind"], config["port"]):
             raise OSError(errno.EADDRINUSE, "Loopback port is busy")
         server = Server((config["bind"], config["port"]), app)
     except OSError as error:
@@ -2095,7 +2105,7 @@ def run_cli(args, root, overrides, config):
         # The errno list is a shortcut; the port itself is the witness. Ask it again when
         # the number is one we do not recognise, so a Windows code nobody has written down
         # yet still gets the sentence that says which port to move off.
-        if error.errno in ADDRESS_IN_USE or something_is_listening(config["port"]):
+        if error.errno in ADDRESS_IN_USE or something_is_listening(config["bind"], config["port"]):
             if lite_is_running(config["port"]):
                 print(f"Titanium Tiiny Bot is already running at http://localhost:{config['port']}")
                 return
