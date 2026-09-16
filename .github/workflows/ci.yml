@@ -31,52 +31,6 @@ jobs:
         # The runners ship whatever they ship, and one test builds a wheel in process.
         run: python -m pip install --upgrade "setuptools>=77" wheel
 
-      - name: What a busy port reports here
-        # TEMPORARY. The Windows job says "cannot bind" where it should say "port is
-        # busy". This runs the exact scenario the failing test runs and prints the facts.
-        if: always()
-        shell: bash
-        run: |
-          python - <<'PY'
-          import os, socket, subprocess, sys, tempfile
-          listener = socket.socket()
-          listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-          listener.bind(('127.0.0.1', 0))
-          listener.listen()
-          port = listener.getsockname()[1]
-          print('listener on', port, flush=True)
-
-          probe = subprocess.run([sys.executable, '-c',
-              'import socket,sys\n'
-              'try:\n'
-              '    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.2).close()\n'
-              '    print("another process connects: ok")\n'
-              'except OSError as e:\n'
-              '    print("another process connect FAILED", e.errno, e)\n', str(port)],
-              capture_output=True, text=True)
-          print(probe.stdout, probe.stderr, flush=True)
-
-          for step in ('bind', 'listen'):
-              second = socket.socket()
-              try:
-                  second.bind(('0.0.0.0', port))
-                  if step == 'listen':
-                      second.listen()
-                  print(step, 'SUCCEEDED beside the listener', flush=True)
-              except OSError as e:
-                  print(step, 'errno', e.errno, 'winerror', getattr(e, 'winerror', None), e, flush=True)
-              second.close()
-
-          with tempfile.TemporaryDirectory() as data:
-              done = subprocess.run([sys.executable, '-m', 'lite', '--port', str(port),
-                                     '--bind', '0.0.0.0', '--model', 'echo', '--data-dir', data],
-                                    capture_output=True, text=True, timeout=60,
-                                    env=os.environ | {'TIINY_BASE': 'http://192.0.2.10/v1'})
-              print('lite returncode', done.returncode)
-              print('lite stdout:', done.stdout)
-              print('lite stderr:', done.stderr, flush=True)
-          PY
-
       - name: Unit tests
         run: python -m unittest discover -s tests
 
