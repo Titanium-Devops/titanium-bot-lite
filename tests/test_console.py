@@ -31,7 +31,7 @@ class ConsoleContractTests(unittest.TestCase):
         ):
             with self.subTest(page=page):
                 marks = [(tag, attrs) for tag, attrs in
-                         Elements((CONSOLE / page).read_text()).items
+                         Elements((CONSOLE / page).read_text(encoding='utf-8')).items
                          if 'tiiny-watermark' in attrs.get('class', '').split()]
                 self.assertEqual(len(marks), 1)
                 tag, attrs = marks[0]
@@ -59,8 +59,8 @@ class ConsoleContractTests(unittest.TestCase):
                                  (ROOT / 'assets' / 'console' / name).read_bytes())
 
     def test_named_renderer_ports_preserve_code_chips(self):
-        source = (CONSOLE / 'app.js').read_text()
-        original = (VENDOR / 'app.js').read_text()
+        source = (CONSOLE / 'app.js').read_text(encoding='utf-8')
+        original = (VENDOR / 'app.js').read_text(encoding='utf-8')
         for start, end in (('  function inlineMarkup(', '  function paragraphMarkup('),
                            ('  function foldRepeatedRows(', '  function messageMarkup(')):
             with self.subTest(function=start):
@@ -73,9 +73,9 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertNotIn('evidenceChipMarkup', source)
 
     def test_door_is_small_and_defers_console(self):
-        resources = json.loads((CONSOLE / 'door-resources.json').read_text())
+        resources = json.loads((CONSOLE / 'door-resources.json').read_text(encoding='utf-8'))
         self.assertLess(first_paint_bytes(), 250_000)
-        markup = (CONSOLE / 'index.html').read_text()
+        markup = (CONSOLE / 'index.html').read_text(encoding='utf-8')
         nodes = Elements(markup).items
         referenced = {attrs['src'] for _, attrs in nodes if 'src' in attrs}
         referenced.update(attrs['href'] for tag, attrs in nodes if tag == 'link')
@@ -87,23 +87,23 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertIn('brand/ti-mark.svg', markup)
 
     def test_empty_conversation_shell_and_boot_ceiling(self):
-        markup = (CONSOLE / 'console.html').read_text()
+        markup = (CONSOLE / 'console.html').read_text(encoding='utf-8')
         for identity in ('room-title', 'room-subtitle', 'participant-cluster',
                          'worker-stack', 'context-card', 'transcript'):
             with self.subTest(identity=identity):
                 self.assertRegex(markup, rf'id="{identity}"[^>]*></')
         self.assertTrue(markup.startswith('<div id="boot-cover"'))
-        boot = (CONSOLE / 'boot-cover.js').read_text()
+        boot = (CONSOLE / 'boot-cover.js').read_text(encoding='utf-8')
         self.assertIn('CEILING_MS = 8000', boot)
         self.assertIn('function shouldLiftCover(state)', boot)
         self.assertIn('window.setTimeout(settle, CEILING_MS)', boot)
         self.assertIn('whenDefined("titan-mascot")', boot)
 
     def test_phone_source_contracts(self):
-        markup = (CONSOLE / 'console.html').read_text()
-        css = (CONSOLE / 'styles.css').read_text()
-        app = (CONSOLE / 'app.js').read_text()
-        self.assertIn('viewport-fit=cover', (CONSOLE / 'index.html').read_text())
+        markup = (CONSOLE / 'console.html').read_text(encoding='utf-8')
+        css = (CONSOLE / 'styles.css').read_text(encoding='utf-8')
+        app = (CONSOLE / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('viewport-fit=cover', (CONSOLE / 'index.html').read_text(encoding='utf-8'))
         self.assertLess(markup.index('id="drawer-scrim"'), markup.index('</main>'))
         self.assertIn('data-talk-button', markup)
         self.assertIn('COMPOSER_MAX_LINES = 8', app)
@@ -116,7 +116,7 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertNotIn('id="workspace-list"', markup)
 
     def test_the_forty_four_pixel_floor_holds_at_every_width(self):
-        css = (CONSOLE / 'styles.css').read_text()
+        css = (CONSOLE / 'styles.css').read_text(encoding='utf-8')
         block = css[css.index('/* Lite: the 44 by 44 floor'):]
         floor = block[block.index('*/') + 2:]
         self.assertIn('composer textarea is left alone', block)
@@ -138,30 +138,30 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertEqual(len([p for p in plates if '.thumb.' not in p.name]), 3)
         for path in (CONSOLE / 'assets' / 'characters').iterdir():
             self.assertTrue(path.name.startswith('titan-'))
-        self.assertIn('Titan Nebula', (CONSOLE / 'bg-boot.js').read_text())
-        loader = (CONSOLE / 'door.js').read_text()
+        self.assertIn('Titan Nebula', (CONSOLE / 'bg-boot.js').read_text(encoding='utf-8'))
+        loader = (CONSOLE / 'door.js').read_text(encoding='utf-8')
         self.assertLess(loader.index("script('bg-boot.js')"), loader.index("'styles.css'"))
 
     def test_talking_is_loaded_and_app_does_not_stand_in_front_of_it(self):
-        loader = (CONSOLE / 'door.js').read_text()
+        loader = (CONSOLE / 'door.js').read_text(encoding='utf-8')
         for name in ('voice.js', 'voice-call-avatar.js'):
             with self.subTest(file=name):
                 self.assertIn(f"'{name}'", loader)
                 self.assertLess(loader.index(f"'{name}'"), loader.index("'app.js'"))
-        app = (CONSOLE / 'app.js').read_text()
+        app = (CONSOLE / 'app.js').read_text(encoding='utf-8')
         self.assertNotIn('Voice is not connected yet', app)
         self.assertNotIn("getElementById('voice-talk').addEventListener", app)
 
     def test_every_file_row_reaches_the_one_viewer(self):
-        app = (CONSOLE / 'app.js').read_text()
+        app = (CONSOLE / 'app.js').read_text(encoding='utf-8')
         self.assertIn("closest?.('[data-attachment-open]')", app)
         self.assertIn('viewer.open({path:row.dataset.attachmentOpen', app)
         # The kind comes off the path, so a skill filed under its frontmatter name still opens as
         # the markdown in its SKILL.md rather than as a download.
-        self.assertIn('const kind = kindFor(path);', (CONSOLE / 'files-viewer.js').read_text())
+        self.assertIn('const kind = kindFor(path);', (CONSOLE / 'files-viewer.js').read_text(encoding='utf-8'))
 
     def test_general_offers_a_microphone_when_the_browser_can_name_one(self):
-        settings = (CONSOLE / 'settings.js').read_text()
+        settings = (CONSOLE / 'settings.js').read_text(encoding='utf-8')
         # Drawn only when voice.js says the browser can enumerate, which is the surface's own rule:
         # a fact the machine could not answer omits its row instead of showing an empty control.
         self.assertIn('global.__voice?.supportsMicChoice?row(\'Microphone\'', settings)
@@ -172,7 +172,7 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertIn("global.__voice?.setMicDeviceId?.(", settings)
 
     def test_model_page_starts_stops_and_asks_for_a_key_in_one_masked_box(self):
-        settings = (CONSOLE / 'settings.js').read_text()
+        settings = (CONSOLE / 'settings.js').read_text(encoding='utf-8')
         # A press on a device model reaches route 7 with that model's id.
         self.assertIn("modelButton(entry.running?'stop':'start'", settings)
         self.assertIn('data-model-id="${esc(entry.id)}"', settings)

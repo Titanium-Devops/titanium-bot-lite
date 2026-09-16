@@ -72,7 +72,7 @@ class ProtocolTests(AppCase):
     def test_memories_come_back_and_can_be_filtered(self):
         (self.app.root / 'memory').mkdir(exist_ok=True)
         (self.app.root / 'memory' / 'profile.md').write_text(
-            '- (2026-09-13) The owner drinks tea\n- (2026-09-13) The owner lives in Texas\n')
+            '- (2026-09-13) The owner drinks tea\n- (2026-09-13) The owner lives in Texas\n', encoding='utf-8')
         everything = rpc(self.app, {'jsonrpc': '2.0', 'id': 6, 'method': 'tools/call',
                                     'params': {'name': 'titan_memories', 'arguments': {}}})
         self.assertIn('drinks tea', everything['result']['content'][0]['text'])
@@ -92,7 +92,7 @@ class ProtocolTests(AppCase):
         after = sorted((path.relative_to(self.app.root), path.stat().st_mtime_ns)
                        for path in self.app.root.rglob('*') if path.is_file())
         self.assertEqual(before, after)
-        source = Path(mcp.__file__).read_text()
+        source = Path(mcp.__file__).read_text(encoding='utf-8')
         for writer in ('write_text', 'write_bytes', 'unlink', 'mkdir', 'atomic_write', 'app.send'):
             self.assertNotIn(writer, source)
 
@@ -113,7 +113,7 @@ class ConfigTests(AppCase):
     def test_the_switch_is_a_real_config_field(self):
         from lite.server import DEFAULTS
         self.assertIs(DEFAULTS['mcp'], True)
-        saved = json.loads((self.app.root / 'config.json').read_text())
+        saved = json.loads((self.app.root / 'config.json').read_text(encoding='utf-8'))
         self.assertIs(saved['mcp'], True)
 
 

@@ -44,7 +44,7 @@ class AgentToolTests(AppCase):
         messages, tokens, usage = self.loop(chat)
         self.assertEqual(tokens, ['Saved it.'])
         self.assertEqual(usage['total_tokens'], 5)
-        self.assertEqual((self.app.root / 'files/note.txt').read_text(), 'hello')
+        self.assertEqual((self.app.root / 'files/note.txt').read_text(encoding='utf-8'), 'hello')
         self.assertEqual([m['role'] for m in messages], ['user', 'assistant', 'tool'])
         self.assertEqual(calls[1][-1]['tool_call_id'], 'call-1')
         receipt = next(m for m in self.app.messages if m.get('toolCallId') == 'call-1')
@@ -75,7 +75,7 @@ class AgentToolTests(AppCase):
         self.assertFalse(bodies[0]['chat_template_kwargs']['enable_thinking'])
         self.assertEqual(bodies[1]['messages'][-1]['role'], 'tool')
         self.assertEqual(bodies[1]['messages'][-1]['tool_call_id'], 'call-1')
-        self.assertEqual((self.app.root / 'files/note.txt').read_text(), 'hello')
+        self.assertEqual((self.app.root / 'files/note.txt').read_text(encoding='utf-8'), 'hello')
 
     def test_six_tool_rounds_then_final_with_tools_disabled(self):
         options_seen = []
@@ -132,7 +132,7 @@ class AgentToolTests(AppCase):
         for path in (self.app.root / 'memory/log').glob('*.md'):
             path.unlink()
         log = self.app.root / 'memory/log/2026-01.md'
-        log.write_text('\n'.join(f'- ({date(2026, 1, 1) + timedelta(days=i)}) fact-{i:02}' for i in range(45)))
+        log.write_text('\n'.join(f'- ({date(2026, 1, 1) + timedelta(days=i)}) fact-{i:02}' for i in range(45)), encoding='utf-8')
         prompt = build_prompt(self.app.root)
         self.assertIn('The owner likes tea.', prompt)
         for i in range(45):
@@ -142,7 +142,7 @@ class AgentToolTests(AppCase):
     def test_catalog_and_run_skill_and_disabled_refusal(self):
         path = self.app.root / 'skills/test-skill/SKILL.md'
         path.parent.mkdir()
-        path.write_text('---\nname: Test skill\ndescription: A deterministic helper\n---\nOnly the body belongs here.')
+        path.write_text('---\nname: Test skill\ndescription: A deterministic helper\n---\nOnly the body belongs here.', encoding='utf-8')
         prompt = build_prompt(self.app.root)
         self.assertIn('Test skill: A deterministic helper (skills/test-skill/SKILL.md)', prompt)
         self.assertNotIn('Only the body belongs here.', prompt)
@@ -222,26 +222,26 @@ class AgentToolTests(AppCase):
             self.assertEqual(list(root.iterdir()), [])
         self.app.run_tool('update_state', dict(base, schedule='0 9 * * 1-5'))
         path, = root.glob('*/routine.json')
-        routine = json.loads(path.read_text())
+        routine = json.loads(path.read_text(encoding='utf-8'))
         self.assertFalse(routine['enabled'])
         self.assertEqual(routine['schedule'], '0 9 * * 1-5')
-        self.assertEqual(json.loads((path.parent / 'runs.json').read_text()), [])
+        self.assertEqual(json.loads((path.parent / 'runs.json').read_text(encoding='utf-8')), [])
         ident = path.parent.name
         for args in (dict(action='resume'), dict(action='update', enabled=True)):
             self.app.run_tool('update_state', dict(target='routine', id=ident, **args))
-            self.assertTrue(json.loads(path.read_text())['enabled'])
+            self.assertTrue(json.loads(path.read_text(encoding='utf-8'))['enabled'])
         self.app.update_state(dict(target='routine', action='pause', id=ident))
-        original = path.read_text()
+        original = path.read_text(encoding='utf-8')
         with self.assertRaises(Refusal):
             self.app.run_tool('update_state', dict(target='routine', action='update', id=ident, schedule='bad cron'))
-        self.assertEqual(path.read_text(), original)
+        self.assertEqual(path.read_text(encoding='utf-8'), original)
         self.app.run_tool('update_state', dict(target='routine', action='update', id=ident, schedule='30 10 * * *', name='Later'))
-        updated = json.loads(path.read_text())
+        updated = json.loads(path.read_text(encoding='utf-8'))
         self.assertEqual(updated['name'], 'Later')
         self.assertEqual(updated['schedule'], '30 10 * * *')
         self.assertFalse(updated['enabled'])
         self.app.run_tool('update_state', dict(target='routine', action='pause', id=ident))
-        self.assertFalse(json.loads(path.read_text())['enabled'])
+        self.assertFalse(json.loads(path.read_text(encoding='utf-8'))['enabled'])
         self.app.run_tool('update_state', dict(target='routine', action='delete', id=ident))
         self.assertFalse(path.exists())
         self.assertFalse((path.parent / 'runs.json').exists())

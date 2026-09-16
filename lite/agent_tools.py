@@ -34,7 +34,7 @@ def file_tool(root, name, args):
         if not isinstance(content, str) or len(content.encode()) > CAP:
             raise Refusal('Write needs text of at most 200 KB.')
         atomic_write(target, content)
-        return f'Wrote {len(content.encode())} bytes to files/{path}.'
+        return f'Wrote {len(content.encode())} bytes to files/{path.as_posix()}.'
     if target.is_dir():
         return '\n'.join(p.name + ('/' if p.is_dir() else '') for p in sorted(target.iterdir()) if not p.is_symlink())[:CAP]
     if target.stat().st_size > CAP:

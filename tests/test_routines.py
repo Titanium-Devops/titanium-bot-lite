@@ -59,7 +59,7 @@ class RoutineTests(AppCase):
         self.app.update_state(dict(target='routine', action='create', name='Morning notes', prompt='Review notes', schedule='* * * * *', enabled=True))
         path = list((self.app.root / 'routines').glob('*/routine.json'))[-1]
         ident = path.parent.name
-        self.assertFalse(json.loads(path.read_text())['enabled'])
+        self.assertFalse(json.loads(path.read_text(encoding='utf-8'))['enabled'])
         if enabled:
             self.app.update_state(dict(target='routine', action='enable', id=ident))
         return ident, path
@@ -84,7 +84,7 @@ class RoutineTests(AppCase):
             self.app.scheduler.tick(due + 1)
             self.app.scheduler.tick(due + 2)
             self.wait_idle()
-        runs = json.loads((path.parent / 'runs.json').read_text())
+        runs = json.loads((path.parent / 'runs.json').read_text(encoding='utf-8'))
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]['status'], 'ok')
         self.assertGreaterEqual(runs[0]['finishedAt'], runs[0]['startedAt'])
@@ -93,22 +93,22 @@ class RoutineTests(AppCase):
         self.assertEqual(transcript[-1]['text'], 'Notes reviewed')
         self.assertTrue(any('toolCallId' in m for m in transcript))
         self.assertEqual(self.app.messages, [])
-        self.assertEqual((self.app.root / 'files/routine.txt').read_text(), 'scheduled')
+        self.assertEqual((self.app.root / 'files/routine.txt').read_text(encoding='utf-8'), 'scheduled')
 
     def test_disabled_never_runs_and_missed_run_is_skipped(self):
         ident, path = self.create(False)
         self.app.scheduler.tick(time.time() + 120)
         self.wait_idle()
-        self.assertEqual(json.loads((path.parent / 'runs.json').read_text()), [])
+        self.assertEqual(json.loads((path.parent / 'runs.json').read_text(encoding='utf-8')), [])
         self.app.update_state(dict(target='routine', action='resume', id=ident))
         due = self.due(ident)
         self.app.scheduler.tick(due + 120)
         self.wait_idle()
-        self.assertEqual(json.loads((path.parent / 'runs.json').read_text()), [])
+        self.assertEqual(json.loads((path.parent / 'runs.json').read_text(encoding='utf-8')), [])
         # Restart disregards the stored last run, even if it was days ago.
-        item = json.loads(path.read_text())
+        item = json.loads(path.read_text(encoding='utf-8'))
         item['lastRunAt'] = 1
-        path.write_text(json.dumps(item))
+        path.write_text(json.dumps(item), encoding='utf-8')
         fresh = Scheduler(self.app)
         self.assertGreater(fresh.next_runs[ident][1], time.time())
 
@@ -128,7 +128,7 @@ class RoutineTests(AppCase):
         with patch.object(self.app.device, 'chat', side_effect=Refusal('Device unavailable')):
             self.app.scheduler.tick(due + 1)
             self.wait_idle()
-        run = json.loads((path.parent / 'runs.json').read_text())[0]
+        run = json.loads((path.parent / 'runs.json').read_text(encoding='utf-8'))[0]
         self.assertEqual((run['status'], run['detail']), ('error', 'Device unavailable'))
         self.app.send(dict(agentId='titan', text='hello'))
         self.wait_idle()
@@ -152,7 +152,7 @@ class RoutineTests(AppCase):
             release.set()
             self.wait_idle()
             self.assertEqual(mock.call_count, 1)
-        self.assertEqual(json.loads((path.parent / 'runs.json').read_text()), [])
+        self.assertEqual(json.loads((path.parent / 'runs.json').read_text(encoding='utf-8')), [])
 
     def test_health_identity_and_probe(self):
         payload = self.request('GET', '/api/health')
@@ -168,9 +168,9 @@ class RoutineTests(AppCase):
     def test_history_cap_started_status_and_device_lane(self):
         ident, path = self.create()
         runs_path = path.parent / 'runs.json'
-        runs_path.write_text(json.dumps([dict(id=str(i), status='ok') for i in range(20)]))
+        runs_path.write_text(json.dumps([dict(id=str(i), status='ok') for i in range(20)]), encoding='utf-8')
         def response(*args, **kwargs):
-            running = json.loads(runs_path.read_text())
+            running = json.loads(runs_path.read_text(encoding='utf-8'))
             self.assertEqual(len(running), 20)
             self.assertEqual(running[-1]['status'], 'running')
             self.assertIsNone(running[-1]['finishedAt'])
@@ -182,7 +182,7 @@ class RoutineTests(AppCase):
             self.app.scheduler.tick(self.due(ident) + 1)
             self.wait_idle()
         lane.assert_called_once()
-        runs = json.loads(runs_path.read_text())
+        runs = json.loads(runs_path.read_text(encoding='utf-8'))
         self.assertEqual(len(runs), 20)
         self.assertEqual(runs[0]['id'], '1')
         self.assertEqual(runs[-1]['status'], 'ok')
@@ -209,7 +209,7 @@ class RoutineTests(AppCase):
         ident, _ = self.create()
         broken = self.app.root / 'routines/broken'
         broken.mkdir()
-        (broken / 'routine.json').write_text('{')
+        (broken / 'routine.json').write_text('{', encoding='utf-8')
         self.app.scheduler.tick(self.due(ident) + 1)
         self.wait_idle()
         self.assertEqual(len(self.app.library()['routines']), 1)

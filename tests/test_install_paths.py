@@ -67,7 +67,7 @@ class FarmInstallTests(unittest.TestCase):
             built, _ = BUILD(ROOT)
         self.archive = self.catalog / built.name
         shutil.copyfile(built, self.archive)
-        self.version = (ROOT / 'lite/VERSION').read_text().strip()
+        self.version = (ROOT / 'lite/VERSION').read_text(encoding='utf-8').strip()
         major, minor, patch = self.version.split('.')
         self.next_version = f'{major}.{minor}.{int(patch) + 1}'
         self.write_catalog(self.version)
@@ -76,7 +76,7 @@ class FarmInstallTests(unittest.TestCase):
 
     def write_catalog(self, version):
         (self.catalog / (IDENT + '.json')).write_text(
-            json.dumps(catalog_manifest(version, self.archive), indent=2))
+            json.dumps(catalog_manifest(version, self.archive), indent=2), encoding='utf-8')
 
     def run_quietly(self, call, *args, **kwargs):
         with contextlib.redirect_stdout(io.StringIO()) as output:
@@ -86,29 +86,29 @@ class FarmInstallTests(unittest.TestCase):
     def test_update_keeps_the_owners_data_and_moves_the_version(self):
         self.run_quietly(self.client.install, IDENT, yes=True)
         app = self.home / IDENT
-        self.assertEqual((app / 'current').read_text().strip(), self.version)
+        self.assertEqual((app / 'current').read_text(encoding='utf-8').strip(), self.version)
         self.assertTrue((app / self.version / 'lite' / '__main__.py').is_file())
 
         # Whatever the owner has said to Titan lives here, beside the installed version.
         keys = app / 'data' / 'keys.json'
         keys.parent.mkdir(exist_ok=True)
-        keys.write_text('{"key": "the owner key"}')
+        keys.write_text('{"key": "the owner key"}', encoding='utf-8')
         (app / 'data' / 'transcripts').mkdir()
-        (app / 'data' / 'transcripts' / 'titan.jsonl').write_text('{"text": "hello"}\n')
+        (app / 'data' / 'transcripts' / 'titan.jsonl').write_text('{"text": "hello"}\n', encoding='utf-8')
 
         self.write_catalog(self.next_version)
         self.run_quietly(self.client.install, IDENT, yes=True, update=True)
 
-        self.assertEqual((app / 'current').read_text().strip(), self.next_version)
-        self.assertEqual(keys.read_text(), '{"key": "the owner key"}')
-        self.assertEqual((app / 'data' / 'transcripts' / 'titan.jsonl').read_text(), '{"text": "hello"}\n')
+        self.assertEqual((app / 'current').read_text(encoding='utf-8').strip(), self.next_version)
+        self.assertEqual(keys.read_text(encoding='utf-8'), '{"key": "the owner key"}')
+        self.assertEqual((app / 'data' / 'transcripts' / 'titan.jsonl').read_text(encoding='utf-8'), '{"text": "hello"}\n')
         self.assertTrue((app / self.next_version / 'lite' / 'VERSION').is_file())
 
     def test_update_refuses_to_go_backwards(self):
         self.run_quietly(self.client.install, IDENT, yes=True)
         self.write_catalog('0.0.1')
         self.assertIn('up to date', self.run_quietly(self.client.install, IDENT, yes=True, update=True))
-        self.assertEqual((self.home / IDENT / 'current').read_text().strip(), self.version)
+        self.assertEqual((self.home / IDENT / 'current').read_text(encoding='utf-8').strip(), self.version)
 
     def test_the_published_archive_is_what_the_installer_accepts(self):
         # The checksum and size in the manifest are the ones release.py produces, and the
@@ -126,7 +126,7 @@ class PipPackageTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.pyproject = tomllib.loads((ROOT / 'pyproject.toml').read_text())
+        cls.pyproject = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
 
     def test_one_version_source_and_a_console_script_that_cannot_collide(self):
         project = self.pyproject['project']
@@ -180,7 +180,7 @@ class PipPackageTests(unittest.TestCase):
             self.assertFalse(name.startswith('lite/data/'), name)
 
     def test_the_readme_documents_one_install_section(self):
-        readme = (ROOT / 'README.md').read_text()
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
         self.assertEqual(readme.count('\n## Install Titan\n'), 1)
         for heading in ('## Install with farm', '## Run it in ten minutes'):
             self.assertNotIn(heading, readme)

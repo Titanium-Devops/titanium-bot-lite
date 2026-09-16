@@ -45,7 +45,7 @@ class DeviceTurnTests(AppCase):
             self.wait_idle()
         self.assertEqual([m['name'] for m in read_memories(self.app.root)],
                          ['My dog is named Biscuit and has a folded ear.'])
-        transcript = json.loads((self.app.root / 'transcripts/main.json').read_text())
+        transcript = json.loads((self.app.root / 'transcripts/main.json').read_text(encoding='utf-8'))
         self.assertEqual(transcript[-1]['text'], answer)
         self.assertLess(time.monotonic() - started, 1)
         self.assertEqual(opened.call_count, 3)
@@ -62,7 +62,7 @@ class DeviceTurnTests(AppCase):
         # A new acquisition after both requests proves the real lane was released.
         with self.app.device.lane.hold(why='regression verification', wait=0.1):
             pass
-        log = (self.app.root / 'lite.log').read_text()
+        log = (self.app.root / 'lite.log').read_text(encoding='utf-8')
         for step in ('request sent', 'chunk kinds counted', 'stream finish reason=tool_calls',
                      'tool call assembled name=update_state', 'argument_length=',
                      'tool executed name=update_state', 'result_length=',
@@ -93,7 +93,7 @@ class DeviceTurnTests(AppCase):
             self.app.send(dict(agentId='titan', text='hello'))
             self.wait_idle()
         self.assertEqual(self.app.messages[-1]['type'], 'turn-failed')
-        log = (self.app.root / 'lite.log').read_text()
+        log = (self.app.root / 'lite.log').read_text(encoding='utf-8')
         self.assertIn('Traceback (most recent call last)', log)
         self.assertIn('ValueError: broken [redacted] stream', log)
         self.assertIn('turn exception', log)
@@ -116,7 +116,7 @@ class DeviceTurnTests(AppCase):
         with patch('urllib.request.urlopen', side_effect=[first, final]):
             self.app.send(dict(agentId='titan', text='remember'))
             self.wait_idle()
-        log = (self.app.root / 'lite.log').read_text()
+        log = (self.app.root / 'lite.log').read_text(encoding='utf-8')
         self.assertIn('tool refused name=update_state', log)
         self.assertIn('Traceback (most recent call last)', log)
         self.assertEqual(self.app.messages[-1]['text'], 'Please give me a text fact.')

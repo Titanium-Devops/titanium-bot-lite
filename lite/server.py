@@ -239,9 +239,13 @@ def read_memories(root):
             ident = hashlib.sha1(text.lower().encode()).hexdigest()[:16]
             facts.setdefault(ident, dict(id=ident, name=text, description=text,
                                         chars=len(text), updatedAt=date,
-                                        path=str(path.relative_to(root))))
+                                        path=path.relative_to(root).as_posix()))
     return list(facts.values())
 
+
+# A busy port has two spellings: errno.EADDRINUSE everywhere, and the WSA number on
+# Windows, which Python passes through untranslated.
+ADDRESS_IN_USE = frozenset({errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)})
 
 MEMORY_CAP = 500
 MEMORY_RECENT = 40
@@ -436,7 +440,7 @@ def read_skills(root):
             continue
         result.append(dict(id=path.parent.name, name=name, description=description,
                            enabled=not (path.parent / "disabled").exists(),
-                           path=str(path.relative_to(root)), body=pieces[2].strip()[:16000]))
+                           path=path.relative_to(root).as_posix(), body=pieces[2].strip()[:16000]))
     return result
 
 
@@ -2059,7 +2063,7 @@ def run_cli(args, root, overrides, config):
         server = Server((config["bind"], config["port"]), app)
     except OSError as error:
         close_for_exit(app)
-        if error.errno == errno.EADDRINUSE:
+        if error.errno in ADDRESS_IN_USE:
             if lite_is_running(config["port"]):
                 print(f"Titanium Tiiny Bot is already running at http://localhost:{config['port']}")
                 return
