@@ -12,7 +12,7 @@ def read_routines(root):
         if path.is_symlink() or path.parent.is_symlink():
             continue
         try:
-            item = json.loads(path.read_text())
+            item = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(item, dict) or any(not isinstance(item.get(k), str) or not item[k].strip() for k in ('name', 'prompt', 'schedule')):
                 continue
             Cron(item['schedule'])

@@ -389,7 +389,7 @@ def _serial_remember(addr, serial):
         fd, temporary = tempfile.mkstemp(prefix=".onelane-serials-",
                                          dir=os.path.dirname(path))
         try:
-            with os.fdopen(fd, "w") as fh:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(got, fh)
             # Readable by every user sharing the device, writable only by us: a
             # reader that cannot write simply re-probes.
@@ -957,7 +957,7 @@ class Budget:
 
     def _note_locked(self, model_id, units, owner):
         try:
-            with open(self.path) as fh:
+            with open(self.path, encoding="utf-8") as fh:
                 book = json.load(fh)
         except Exception:
             book = {}
@@ -968,7 +968,7 @@ class Budget:
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self.path) or ".",
                                    prefix=".onelane-budget-")
         try:
-            with os.fdopen(fd, "w") as fh:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(book, fh, indent=1)
             os.replace(tmp, self.path)
         except BaseException:

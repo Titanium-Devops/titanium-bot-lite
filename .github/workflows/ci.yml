@@ -26,6 +26,11 @@ jobs:
           # The manifest asks for 3.11 and that is what the farm looks for.
           python-version: "3.11"
 
+      - name: A setuptools that understands the license field
+        # pyproject declares its licence the PEP 639 way, which setuptools learned in 77.
+        # The runners ship whatever they ship, and one test builds a wheel in process.
+        run: python -m pip install --upgrade "setuptools>=77" wheel
+
       - name: Unit tests
         run: python -m unittest discover -s tests
 
