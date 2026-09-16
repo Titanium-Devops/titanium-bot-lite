@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OneLane — let two applications share one Tiiny without fighting over it.
 
-    pip install nothing.  Copy this file next to yours.
+    pip install nothing.  Copy this file and filelock.py next to yours.
 
 WHY THIS EXISTS
 ---------------
@@ -60,7 +60,6 @@ Everything blocks until the device is free. That is the point.
 
 import contextlib
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -76,6 +75,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import weakref
+
+try:
+    from . import filelock            # the usual case: inside the lite package
+except ImportError:                   # copied out on its own, filelock.py beside it
+    import filelock
+
+O_NOFOLLOW = filelock.O_NOFOLLOW
 
 __all__ = ["OneLane", "DeviceBusy", "DeviceError", "Budget", "who",
            "device_from_env"]
@@ -317,6 +323,11 @@ def _auto_unshared(dirname):
 # create it 0644, so the second user to arrive gets PermissionError instead of a lock.
 LOCK_MODE = 0o666
 
+# Several things below are POSIX-shaped rather than merely POSIX-flavoured: file
+# ownership, fchmod, and a signal you can send without delivering it. Windows has
+# none of them, so ask once and skip those paths there.
+_POSIX = hasattr(os, "geteuid")
+
 # The holder record is written at a fixed width so a reader never sees a partial one.
 RECORD_BYTES = 512
 
@@ -467,7 +478,7 @@ def _open_shared(path):
     the useful thing to tell someone in that situation is which path to move off.
     """
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, LOCK_MODE)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | O_NOFOLLOW, LOCK_MODE)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             raise DeviceError(
@@ -483,17 +494,18 @@ def _open_shared(path):
         # look untouched. Refreshing the timestamp on every acquire keeps an actively
         # used lock out of their way. It is a mitigation, not a guarantee — see the
         # README note on ONELANE_DIR for long-lived services.
-        try:
-            os.utime(fd, None)
-        except OSError:
-            pass
+        if os.utime in getattr(os, "supports_fd", ()):
+            try:
+                os.utime(fd, None)
+            except OSError:
+                pass
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise DeviceError("lock path %s is not a regular file" % path)
         # Only widen permissions on a file that is unambiguously ours. Someone else's
         # file either already allows this or is their decision to make, and a file with
         # extra hard links is not one we can reason about.
-        if st.st_uid == os.geteuid() and st.st_nlink == 1 \
+        if _POSIX and st.st_uid == os.geteuid() and st.st_nlink == 1 \
                 and stat.S_IMODE(st.st_mode) != LOCK_MODE:
             try:
                 os.fchmod(fd, LOCK_MODE)
@@ -518,6 +530,13 @@ def _alive(pid):
     """Is that process still running? Signal 0 checks without disturbing it."""
     if not pid or pid <= 0:
         return False
+    if not _POSIX:
+        # There is no "just asking" signal on Windows: os.kill maps every value that is
+        # not a console control event onto TerminateProcess, so the POSIX probe would
+        # kill the very process it asks about. The stdlib has no other liveness check
+        # and ctypes is forbidden in a farm app, so treat a recorded holder as live.
+        # The lock is the real source of truth; this only decorates a dashboard.
+        return True
     try:
         os.kill(pid, 0)
         return True
@@ -562,7 +581,7 @@ def who(host=None, port=None, lock_key=None, path=None):
            "waiting": [], "lock": path,
            "lock_warning": _auto_unshared(os.path.dirname(path) or ".")}
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW)
     except OSError:
         return out                        # no lock file yet: nobody has ever used it
     try:
@@ -602,7 +621,7 @@ def who(host=None, port=None, lock_key=None, path=None):
         for fn in sorted(os.listdir(den))[:MAX_WAITERS]:
             full = os.path.join(den, fn)
             try:
-                wfd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW)
+                wfd = os.open(full, os.O_RDONLY | O_NOFOLLOW)
                 try:
                     raw = os.read(wfd, RECORD_BYTES)
                 finally:
@@ -751,7 +770,7 @@ class _CrossProcessLock:
             fh = _open_shared(self.path)
             while True:
                 try:
-                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    filelock.lock_nb(fh)
                     # The lock lives on the inode, not the name. A tmp cleaner can
                     # delete the file while a long-lived holder still has it open; the
                     # next process then creates a NEW inode at the same path, locks it
@@ -759,7 +778,7 @@ class _CrossProcessLock:
                     # 24/7 service is exactly the profile this happens to, so confirm
                     # the name still points at the thing we just locked.
                     if not _same_file(self.path, fh):
-                        fcntl.flock(fh, fcntl.LOCK_UN)
+                        filelock.unlock(fh)
                         os.close(fh)
                         fh = _open_shared(self.path)
                         continue
@@ -837,13 +856,13 @@ class _CrossProcessLock:
             # path is guessable, and plain open() follows symlinks — a link planted at
             # <pid>-<tid>.json redirected this write into an arbitrary file the user
             # owned. The lock file already used O_NOFOLLOW; this one did not.
-            if os.stat(den).st_uid != os.geteuid():
+            if _POSIX and os.stat(den).st_uid != os.geteuid():
                 raise OSError("queue directory belongs to someone else")
             mine = os.path.join(den, "%d-%d.json" % (os.getpid(), threading.get_ident()))
             blob = json.dumps({"owner": self.owner, "pid": os.getpid(),
                                "why": self.why, "since": time.time()},
                               default=str).encode()[:RECORD_BYTES]
-            wfd = os.open(mine, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            wfd = os.open(mine, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW, 0o644)
             try:
                 os.write(wfd, blob)
             finally:
