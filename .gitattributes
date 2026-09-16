@@ -1,0 +1,14 @@
+# Check every text file out with LF on every platform.
+#
+# Git for Windows defaults to core.autocrlf=true, which rewrites LF to CRLF in the
+# working tree. That turned the release archive built from a Windows checkout into a
+# CRLF one, and lite/VERSION alone is enough to change the archive's SHA-256, so the
+# same tag would have published two different bytes depending on who built it.
+* text=auto eol=lf
+
+# Binaries carry no line endings to normalise.
+*.png binary
+*.webp binary
+*.svg text eol=lf
+*.wav binary
+*.ico binary

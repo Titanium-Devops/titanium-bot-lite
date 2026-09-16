@@ -49,14 +49,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(DEFAULTS['base'], '')
         self.assertEqual(load_config(self.root),
                          DEFAULTS | {'base': 'http://192.0.2.10/v1', 'key': ''})
-        self.assertEqual(json.loads((self.root / 'config.json').read_text()), DEFAULTS)
-        self.assertEqual((self.root / 'keys.json').stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads((self.root / 'config.json').read_text(encoding='utf-8')), DEFAULTS)
+        # POSIX mode bits only. A Windows file has none: it inherits the ACL of the
+        # directory it was made in, which under a user's profile already keeps other
+        # users out, and os.chmod there can only toggle the read-only flag.
+        if os.name == 'posix':
+            self.assertEqual((self.root / 'keys.json').stat().st_mode & 0o777, 0o600)
 
     def test_precedence_all_layers(self):
         load_config(self.root)
         saved = dict(base='http://config/v1', model='config-model', port=8001, bind='127.0.0.1', name='Ada', mcp=True)
-        (self.root / 'config.json').write_text(json.dumps(saved))
-        (self.root / 'keys.json').write_text(json.dumps({'apiKey': 'stored-secret'}))
+        (self.root / 'config.json').write_text(json.dumps(saved), encoding='utf-8')
+        (self.root / 'keys.json').write_text(json.dumps({'apiKey': 'stored-secret'}), encoding='utf-8')
         self.assertEqual(load_config(self.root), saved | {'endpoints': [], 'key': 'stored-secret'})
         env = dict(TIINY_BASE='http://env/v1', TIINY_MODEL='env-model', TIINY_PORT='8002', TIINY_KEY='env-secret')
         with patch.dict(os.environ, env):
@@ -66,11 +70,11 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual((code, err), (0, ''))
             self.assertEqual(json.loads(out), dict(base='http://cli/v1', model='cli-model', port=8003, bind='localhost', name='CLI', endpoints=[], mcp=False, key='********'))
             self.assertNotIn('secret', out)
-        self.assertEqual(json.loads((self.root / 'config.json').read_text()), saved)
+        self.assertEqual(json.loads((self.root / 'config.json').read_text(encoding='utf-8')), saved)
 
     def test_show_config_masks_stored_and_environment_key_without_starting_app(self):
         load_config(self.root)
-        (self.root / 'keys.json').write_text('{"apiKey":"stored-secret"}')
+        (self.root / 'keys.json').write_text('{"apiKey":"stored-secret"}', encoding='utf-8')
         for env in ({}, {'TIINY_KEY': 'environment-secret'}):
             with patch.dict(os.environ, env), patch('lite.server.App') as app:
                 code, out, err = self.cli('--show-config')
@@ -78,7 +82,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual((code, err), (0, ''))
             self.assertEqual(json.loads(out)['key'], '********')
             self.assertNotIn('secret', out)
-            self.assertNotIn('secret', (self.root / 'config.json').read_text())
+            self.assertNotIn('secret', (self.root / 'config.json').read_text(encoding='utf-8'))
 
     def test_busy_port_one_sentence_and_exit_one(self):
         with patch('lite.server.lite_is_running', return_value=False), patch('lite.server.Server', side_effect=OSError(errno.EADDRINUSE, 'Address in use')):
@@ -97,7 +101,7 @@ class ConfigTests(unittest.TestCase):
         # The startup line said "Titanium Bot Lite is ready" while --stop and the already-running
         # line said "Titanium Tiiny Bot", and the model's own base prompt said a third thing. The
         # package and the health identity stay titanium-bot-lite; those are identifiers, not copy.
-        source = (Path(__file__).resolve().parents[1] / 'lite' / 'server.py').read_text()
+        source = (Path(__file__).resolve().parents[1] / 'lite' / 'server.py').read_text(encoding='utf-8')
         self.assertNotIn('Titanium Bot Lite', source)
         self.assertIn('Titanium Tiiny Bot is ready at', source)
         self.assertIn('the local assistant in Titanium Tiiny Bot', source)
@@ -151,13 +155,13 @@ class ConfigTests(unittest.TestCase):
     def test_malformed_configuration_exits_without_traceback(self):
         load_config(self.root)
         for filename, contents in (("keys.json", "[]"), ("config.json", "not json")):
-            (self.root / filename).write_text(contents)
+            (self.root / filename).write_text(contents, encoding='utf-8')
             code, out, err = self.cli("--show-config")
             self.assertEqual(code, 1)
             self.assertEqual(out, "")
             self.assertNotIn("Traceback", err)
             self.assertIn("configuration", err)
-            (self.root / filename).write_text("{}")
+            (self.root / filename).write_text("{}", encoding='utf-8')
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
@@ -165,7 +169,7 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse((self.root / 'config.json').exists())
         self.assertEqual(__version__,
                          (Path(__file__).resolve().parents[1] / 'lite/VERSION')
-                         .read_text().strip())
+                         .read_text(encoding='utf-8').strip())
 
     def test_settings_model_and_name_survive_restart(self):
         app = App(self.root)
@@ -177,10 +181,10 @@ class ConfigTests(unittest.TestCase):
         restarted = App(self.root)
         self.addCleanup(restarted.close)
         self.assertEqual((restarted.device.base, restarted.device.model, restarted.settings['botName']), ('http://new/v1', 'chosen', 'Ada'))
-        self.assertEqual(json.loads((self.root / 'keys.json').read_text()), {})
-        old = (self.root / 'config.json').read_text()
+        self.assertEqual(json.loads((self.root / 'keys.json').read_text(encoding='utf-8')), {})
+        old = (self.root / 'config.json').read_text(encoding='utf-8')
         self.assertEqual(wire(restarted, 'PATCH', '/api/settings', {'base': 'http://user:secret@host/v1'})[0], 400)
-        self.assertEqual((self.root / 'config.json').read_text(), old)
+        self.assertEqual((self.root / 'config.json').read_text(encoding='utf-8'), old)
 
     def test_default_resolves_first_chat_model_and_explicit_skips_discovery(self):
         device = Device(self.root, 'http://192.0.2.10/v1', '', 'default')
@@ -247,6 +251,8 @@ class ConfigTests(unittest.TestCase):
                     self.assertIsNone(device.resolved_model)
 
 class DefaultDataDirTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix',
+                         'chmod 0o500 does not take write access away from a Windows directory')
     def test_falls_back_under_home_when_the_app_folder_cannot_be_written(self):
         import os, tempfile
         from unittest import mock

@@ -15,7 +15,9 @@ import ast
 import pathlib
 import unittest
 
-LITE = pathlib.Path(__file__).resolve().parents[1] / "lite"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+LITE = ROOT / "lite"
+TESTS = ROOT / "tests"
 
 # Modules that simply are not there on Windows. Importing one inside a try, or inside a
 # function that only runs on POSIX, is fine; this is about the top of a file, where an
@@ -31,16 +33,17 @@ def _mode_of(call):
     return None
 
 
-def _sources():
-    for path in sorted(LITE.rglob("*.py")):
-        yield path, ast.parse(path.read_bytes(), filename=str(path))
+def _sources(*folders):
+    for folder in folders or (LITE,):
+        for path in sorted(folder.rglob("*.py")):
+            yield path, ast.parse(path.read_bytes(), filename=str(path))
 
 
 class PortabilityTests(unittest.TestCase):
     def test_every_text_stream_names_its_encoding(self):
         """Default encoding is UTF-8 on this Mac and cp1252 on a tester's Windows."""
         guilty = []
-        for path, tree in _sources():
+        for path, tree in _sources(LITE, TESTS):
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
@@ -86,6 +89,43 @@ class PortabilityTests(unittest.TestCase):
         self.assertTrue(seeds, "no seed files found")
         self.assertTrue(any(any(byte > 0x7F for byte in p.read_bytes()) for p in seeds),
                         "no seed file has a byte outside ASCII any more")
+
+
+class PathShapeTests(unittest.TestCase):
+    """A path the model is shown, or that the code matches on, is spelled with slashes.
+
+    str(Path) uses the OS separator, so on Windows the skills catalog read
+    `skills\\greeting\\SKILL.md` in the prompt, and worse, select_memories filters facts
+    on a "memory/log/" prefix that a backslash path can never match. Memory recall
+    simply returned nothing there, with no error to say so.
+    """
+
+    def setUp(self):
+        import tempfile
+        from lite import server
+        folder = tempfile.TemporaryDirectory(prefix="lite-paths-")
+        self.addCleanup(folder.cleanup)
+        self.root = pathlib.Path(folder.name)
+        self.server = server
+        (self.root / "memory/log").mkdir(parents=True)
+        (self.root / "memory/log/2026-09-16.md").write_text(
+            "- (2026-09-16) The owner keeps bees.\n", encoding="utf-8")
+        (self.root / "skills/greeting").mkdir(parents=True)
+        (self.root / "skills/greeting/SKILL.md").write_text(
+            "---\nname: Greeting\ndescription: Say hello\n---\nSay hello.\n", encoding="utf-8")
+
+    def test_memory_and_skill_paths_use_forward_slashes(self):
+        for row in self.server.read_memories(self.root) + self.server.read_skills(self.root):
+            self.assertNotIn("\\", row["path"], row)
+        self.assertEqual([m["path"] for m in self.server.read_memories(self.root)],
+                         ["memory/log/2026-09-16.md"])
+        self.assertEqual([s["path"] for s in self.server.read_skills(self.root)],
+                         ["skills/greeting/SKILL.md"])
+
+    def test_a_saved_fact_still_reaches_the_prompt(self):
+        """The prefix match select_memories does is the thing backslashes broke."""
+        memories, profile, recent, surfaced = self.server.select_memories(self.root, "bees", None)
+        self.assertEqual([m["name"] for m in recent], ["The owner keeps bees."])
 
 
 if __name__ == "__main__":

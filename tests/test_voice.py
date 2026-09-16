@@ -146,7 +146,9 @@ class VoiceTests(AppCase):
         self.assertEqual(headers['Content-Type'], 'audio/wav')
         self.assertEqual(headers['Cache-Control'], 'private, no-store')
         cache = self.app.voice.folder / result['audio'].rsplit('/', 1)[1]
-        self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+        # POSIX mode bits only; see the note in test_config.py.
+        if os.name == 'posix':
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
         asr = next(req for path, req in self.calls if path.endswith('/transcriptions'))
         self.assertIn(b'name="model"\r\n\r\nears', asr.data)
         self.assertIn(b'filename="recording.webm"', asr.data)
@@ -166,8 +168,8 @@ class VoiceTests(AppCase):
         self.assertTrue(messages[0]['spoken'])
         self.assertEqual(messages[-1]['text'], self.said)
         self.assertEqual(messages[1]['type'], 'system')
-        self.assertIn('I like tea', (self.app.root / 'memory/profile.md').read_text())
-        saved = json.loads((self.app.root / 'transcripts/main.json').read_text())
+        self.assertIn('I like tea', (self.app.root / 'memory/profile.md').read_text(encoding='utf-8'))
+        saved = json.loads((self.app.root / 'transcripts/main.json').read_text(encoding='utf-8'))
         self.assertTrue(saved[0]['spoken'])
         chats = [json.loads(req.data) for path, req in self.calls if path.endswith('/chat/completions')]
         self.assertIn('tools', chats[0])
@@ -275,7 +277,7 @@ class VoiceTests(AppCase):
             saved = self.request('PATCH', '/api/settings', {'voice': {'mode': mode}})
             self.assertEqual(saved['voice']['enabled'], mode != 'off')
             self.assertEqual(saved['talkEnabled'], mode != 'off')
-            persisted = json.loads((self.app.root / 'settings.json').read_text())
+            persisted = json.loads((self.app.root / 'settings.json').read_text(encoding='utf-8'))
             self.assertEqual(persisted['voice']['mode'], mode)
             self.assertEqual(self.request('GET', '/api/voice/settings')['mode'], mode)
         for body in ({'voice': {'mode': 'unknown'}}, {'voice': {'asrModel': 'other'}},

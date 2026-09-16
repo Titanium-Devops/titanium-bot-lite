@@ -36,7 +36,7 @@ class ExtractionTests(AppCase):
         def watch(request, **kwargs):
             if b'You keep the long-term memory' in (request.data or b''):
                 # The reply is already saved before the device is asked anything else.
-                seen['transcript'] = json.loads((self.app.root / 'transcripts/main.json').read_text())
+                seen['transcript'] = json.loads((self.app.root / 'transcripts/main.json').read_text(encoding='utf-8'))
                 return reply_stream('\n'.join((
                     'profile: The owner lives in Dallas.',
                     'log: The owner joined Titanium Computing in September 2026.',
@@ -48,10 +48,10 @@ class ExtractionTests(AppCase):
             self.wait_idle()
         self.assertEqual(seen['transcript'][-1]['text'], 'Congratulations on the move.')
         self.assertEqual(seen['transcript'][-1]['type'], 'text')
-        profile = (self.app.root / 'memory/profile.md').read_text()
+        profile = (self.app.root / 'memory/profile.md').read_text(encoding='utf-8')
         self.assertIn('The owner lives in Dallas.', profile)
         self.assertNotIn('Austin', profile)
-        log = next((self.app.root / 'memory/log').glob('*.md')).read_text()
+        log = next((self.app.root / 'memory/log').glob('*.md')).read_text(encoding='utf-8')
         self.assertIn('The owner joined Titanium Computing in September 2026.', log)
         self.assertIn('[note] The owner prefers the window seat.', log)
         self.assertEqual(self.facts(), ['The owner joined Titanium Computing in September 2026.',
@@ -71,7 +71,7 @@ class ExtractionTests(AppCase):
         self.turn('Tell me everything about the workshop I described yesterday.',
                   extracted='profile: ' + single)
         self.assertEqual(self.facts(), [])
-        self.assertIn('extracted sentence refused at', (self.app.root / 'lite.log').read_text())
+        self.assertIn('extracted sentence refused at', (self.app.root / 'lite.log').read_text(encoding='utf-8'))
 
     def test_long_fact_splits_at_a_sentence_boundary_and_keeps_every_word(self):
         first = 'The owner runs Titanium Computing with Richard. ' * 8
@@ -114,7 +114,7 @@ class ExtractionTests(AppCase):
             self.wait_idle()
         self.assertEqual(self.app.messages[-1]['type'], 'text')
         self.assertEqual(self.app.messages[-1]['text'], 'Saved.')
-        self.assertIn('memory extraction failed', (self.app.root / 'lite.log').read_text())
+        self.assertIn('memory extraction failed', (self.app.root / 'lite.log').read_text(encoding='utf-8'))
 
 
 class RecallTests(AppCase):
@@ -122,12 +122,12 @@ class RecallTests(AppCase):
         for path in (self.app.root / 'memory/log').glob('*.md'):
             path.unlink()
         (self.app.root / 'memory/log/2026-01.md').write_text(
-            '\n'.join(f'- ({start + timedelta(days=i)}) {text.format(i)}' for i in range(count)))
+            '\n'.join(f'- ({start + timedelta(days=i)}) {text.format(i)}' for i in range(count)), encoding='utf-8')
 
     def test_ranker_prefers_an_overlapping_fact_over_a_newer_one(self):
         self.fill_log()
         (self.app.root / 'memory/log/2025-11.md').write_text(
-            '- (2025-11-02) Biscuit the dog eats the salmon food and nothing else.\n')
+            '- (2025-11-02) Biscuit the dog eats the salmon food and nothing else.\n', encoding='utf-8')
         quiet = build_prompt(self.app.root)
         self.assertNotIn('Biscuit', quiet)
         self.assertIn('fact-44', quiet)

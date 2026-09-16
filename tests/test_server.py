@@ -109,7 +109,9 @@ class RouteTests(AppCase):
         self.assertLess(settings['budget']['firstPaintKb'], 250)
         self.assertLess(settings['budget']['coldStartMs'], 5000)
         self.assertEqual(set(self.request('GET', '/api/library')), {'memories', 'skills', 'routines'})
-        self.assertEqual((self.app.root / 'keys.json').stat().st_mode & 0o777, 0o600)
+        # POSIX mode bits only; see the note in test_config.py.
+        if os.name == 'posix':
+            self.assertEqual((self.app.root / 'keys.json').stat().st_mode & 0o777, 0o600)
 
     def test_settings_write_restart_and_validation(self):
         result = self.request('PATCH', '/api/settings', {'botName': 'Ada', 'persona': 'Fresh persona é', 'theme': 'light'})
@@ -153,7 +155,7 @@ class RouteTests(AppCase):
         self.assertEqual(models['lan'], [])
         self.assertEqual(models['live']['source'], 'device')
         self.assertEqual(self.request('POST', '/api/model', {'action': 'use', 'id': 'another'})['live']['model'], 'echo')
-        self.assertEqual(json.loads((self.app.root / 'config.json').read_text())['model'], 'another')
+        self.assertEqual(json.loads((self.app.root / 'config.json').read_text(encoding='utf-8'))['model'], 'another')
         self.request('POST', '/api/model', {'action': 'sideways', 'id': 'echo'}, 400)
         self.request('POST', '/api/model', {'action': 'use'}, 400)
         for action in ('start', 'stop'):
@@ -189,7 +191,7 @@ class RouteTests(AppCase):
         self.assertIn('Hello from the skill', self.app.messages[0]['text'])
 
     def test_file_conditional_get_and_private_traversal(self):
-        (self.app.root / 'files/note.txt').write_text('hello')
+        (self.app.root / 'files/note.txt').write_text('hello', encoding='utf-8')
         status, headers, body = wire(self.app, 'GET', '/api/file?path=files/note.txt')
         self.assertEqual((status, body), (200, b'hello'))
         self.assertIn('sandbox', headers['Content-Security-Policy'])
@@ -299,19 +301,19 @@ class ReaderAndQueueTests(AppCase):
 
     def test_lite_contains_no_process_launches(self):
         for path in (Path(__file__).resolve().parents[1] / 'lite').rglob('*.py'):
-            source = path.read_text()
+            source = path.read_text(encoding='utf-8')
             self.assertNotIn('subprocess', source, str(path))
             self.assertNotIn('os.system', source, str(path))
 
     def test_memory_reader_validation_and_live_persona(self):
         path = self.app.root / 'memory/profile.md'
-        path.write_text('- (2026-09-11) Café\t au  lait\n- (2026-09-12) CAFÉ AU LAIT\n- (2026-02-30) invalid date\n- (2026-09-11) ' + 'é' * 500 + '\n- (2026-09-11) ' + 'z' * 501 + '\nnot a fact\n')
+        path.write_text('- (2026-09-11) Café\t au  lait\n- (2026-09-12) CAFÉ AU LAIT\n- (2026-02-30) invalid date\n- (2026-09-11) ' + 'é' * 500 + '\n- (2026-09-11) ' + 'z' * 501 + '\nnot a fact\n', encoding='utf-8')
         facts = read_memories(self.app.root)
         self.assertEqual([f['chars'] for f in facts], [12, 500])
-        (self.app.root / 'files/facts.md').write_text('- (2026-09-11) Must not enter memory from symlink\n')
+        (self.app.root / 'files/facts.md').write_text('- (2026-09-11) Must not enter memory from symlink\n', encoding='utf-8')
         (self.app.root / 'memory/leak.md').symlink_to(self.app.root / 'files/facts.md')
         self.assertEqual(read_memories(self.app.root), facts)
-        (self.app.root / 'persona.md').write_text('Persona changed just now')
+        (self.app.root / 'persona.md').write_text('Persona changed just now', encoding='utf-8')
         self.assertIn('Persona changed just now', build_prompt(self.app.root))
 
     def test_queue_history_does_not_include_future_turns(self):
@@ -537,7 +539,7 @@ class ModelRouteTests(AppCase):
 
     def prepare(self, root):
         root.mkdir(parents=True, exist_ok=True)
-        (root / 'keys.json').write_text(json.dumps({'apiKey': 'device-private-key'}))
+        (root / 'keys.json').write_text(json.dumps({'apiKey': 'device-private-key'}), encoding='utf-8')
 
     def setUp(self):
         # An empty base in config.json means "find the device", so the search is
@@ -641,13 +643,15 @@ class ModelRouteTests(AppCase):
             'model': 'llama3', 'apiKey': 'lan-private-key'})['live']
         self.assertEqual(live['endpoint'], 'http://192.168.7.5:11434/v1')
         self.assertEqual((live['source'], live['hasKey'], live['model']), ('lan', True, 'llama3'))
-        saved = json.loads((self.app.root / 'config.json').read_text())
+        saved = json.loads((self.app.root / 'config.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['endpoints'], [{'baseUrl': 'http://192.168.7.5:11434/v1', 'model': 'llama3'}])
         self.assertEqual(saved['base'], 'http://192.168.7.5:11434/v1')
         self.assertNotIn('lan-private-key', json.dumps(saved))
         keys = self.app.root / 'keys.json'
-        self.assertEqual(keys.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(json.loads(keys.read_text()),
+        # POSIX mode bits only; see the note in test_config.py.
+        if os.name == 'posix':
+            self.assertEqual(keys.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(keys.read_text(encoding='utf-8')),
                          {'apiKey': 'device-private-key',
                           'endpoints': {'http://192.168.7.5:11434/v1': 'lan-private-key'}})
         self.assertEqual(self.models()['lan'],
@@ -670,7 +674,7 @@ class ModelRouteTests(AppCase):
         # The device's key is still the device's, and the cloud key never went there.
         self.assertEqual(self.app.device.key, 'device-private-key')
         self.request('POST', '/api/model', {'action': 'forget', 'baseUrl': 'https://api.example.com/v1'})
-        self.assertEqual(json.loads((self.app.root / 'keys.json').read_text()),
+        self.assertEqual(json.loads((self.app.root / 'keys.json').read_text(encoding='utf-8')),
                          {'apiKey': 'device-private-key', 'endpoints': {}})
         self.assertEqual(self.models()['lan'], [])
         self.assertEqual(endpoint_kind('http://titan.local/v1'), 'lan')
@@ -696,7 +700,7 @@ class ModelRouteTests(AppCase):
         self.app.device.log.error('upstream said %s', 'lan-private-key')
         for handler in self.app.device.log.handlers:
             handler.flush()
-        written = (self.app.root / 'lite.log').read_text()
+        written = (self.app.root / 'lite.log').read_text(encoding='utf-8')
         self.assertIn('[redacted]', written)
         self.assertNotIn('lan-private-key', written)
 

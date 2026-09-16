@@ -68,11 +68,12 @@ class ShutdownTests(unittest.TestCase):
         deadline = time.monotonic() + 5
         while not (self.data / 'mid-turn').exists():
             if process.poll() is not None or time.monotonic() > deadline:
-                self.fail('Headless CLI did not reach a real blocked turn: ' + (self.data / 'process.log').read_text())
+                self.fail('Headless CLI did not reach a real blocked turn: ' + (self.data / 'process.log').read_text(encoding='utf-8'))
             time.sleep(0.02)
-        self.assertEqual(int((self.data / 'lite.pid').read_text()), process.pid)
+        self.assertEqual(int((self.data / 'lite.pid').read_text(encoding='utf-8')), process.pid)
         return process
 
+    @unittest.skipUnless(os.name == 'posix', 'Windows delivers no SIGINT to another process')
     def test_sigint_exits_within_two_seconds_mid_turn(self):
         process = self.launch()
         started = time.monotonic()
@@ -88,10 +89,16 @@ class ShutdownTests(unittest.TestCase):
                                 env=self.env, text=True, capture_output=True, timeout=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Stopped', result.stdout)
-        self.assertEqual(process.wait(timeout=0.3), 0)
+        # POSIX gets an interrupt and shuts down, so it exits 0. Windows has no signal to
+        # deliver: os.kill there is TerminateProcess and the exit code becomes the number
+        # that was asked for. What both owe us is that the process is gone inside the
+        # budget and left no pid file claiming it is still running.
+        code = process.wait(timeout=0.3)
+        self.assertEqual(code, 0 if os.name == 'posix' else signal.SIGINT)
         self.assertLess(time.monotonic() - started, 2)
         self.assertFalse((self.data / 'lite.pid').exists())
 
+    @unittest.skipUnless(os.name == 'posix', 'preexec_fn, and an inherited SIG_IGN, are POSIX')
     def test_stop_works_when_shell_ignored_sigint(self):
         process = self.launch(ignore_sigint=True)
         result = subprocess.run([sys.executable, '-m', 'lite', '--stop'], cwd=ROOT,
@@ -105,11 +112,11 @@ class ShutdownTests(unittest.TestCase):
                                 text=True, capture_output=True, timeout=2)
         self.assertEqual(result.returncode, 1)
         self.assertIn('already running', result.stderr)
-        self.assertEqual(int((self.data / 'lite.pid').read_text()), process.pid)
+        self.assertEqual(int((self.data / 'lite.pid').read_text(encoding='utf-8')), process.pid)
 
     def test_stale_pid_does_not_signal_this_test_process(self):
         (self.data / '.lite.lock').touch()
-        (self.data / 'lite.pid').write_text(str(os.getpid()))
+        (self.data / 'lite.pid').write_text(str(os.getpid()), encoding='utf-8')
         with contextlib.redirect_stdout(io.StringIO()) as output:
             stop_running(self.data)
         self.assertIn('not running', output.getvalue())
@@ -125,7 +132,9 @@ class ShutdownTests(unittest.TestCase):
     def test_pid_file_is_private_and_removed_after_failure(self):
         with self.assertRaisesRegex(RuntimeError, 'failure'):
             with running_pid(self.data):
-                self.assertEqual((self.data / 'lite.pid').stat().st_mode & 0o777, 0o600)
+                # POSIX mode bits only; see the note in test_config.py.
+                if os.name == 'posix':
+                    self.assertEqual((self.data / 'lite.pid').stat().st_mode & 0o777, 0o600)
                 with self.assertRaises(Refusal):
                     with running_pid(self.data):
                         self.fail('Duplicate owner admitted')
@@ -146,7 +155,7 @@ class ReleaseTests(unittest.TestCase):
                            'vendor/private': 'no', 'data/keys.json': 'secret',
                            'lite/__pycache__/cached.pyc': 'no', 'lite/data/secret': 'no',
                            'tests/test.py': 'no'}.items():
-            (self.root / name).write_text(data)
+            (self.root / name).write_text(data, encoding='utf-8')
 
     def build(self):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -178,6 +187,6 @@ class ReleaseTests(unittest.TestCase):
             self.build()
 
     def test_invalid_version_is_refused(self):
-        (self.root / 'lite/VERSION').write_text('../outside')
+        (self.root / 'lite/VERSION').write_text('../outside', encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'three-part'):
             self.build()

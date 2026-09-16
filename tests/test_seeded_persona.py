@@ -16,7 +16,7 @@ class SeedTests(unittest.TestCase):
                                        'TIINY_BASE': 'http://192.0.2.10/v1'}):
                 app = App(root)
                 try:
-                    self.assertEqual((root / 'persona.md').read_text(), PERSONA)
+                    self.assertEqual((root / 'persona.md').read_text(encoding='utf-8'), PERSONA)
                     self.assertEqual(len(app.messages), 1)
                     self.assertIn('What should I call you?', app.messages[0]['text'])
                     self.assertIn('your assistant', app.messages[0]['text'])
@@ -29,7 +29,7 @@ class SeedTests(unittest.TestCase):
                     self.assertIn('BEFORE', PERSONA)
                     self.assertIn('I never ask anybody to type a password', PERSONA)
                     app.patch_settings({'persona': 'Owner edited this persona.'})
-                    (root / 'skills/onboarding/SKILL.md').write_text('owner custom skill')
+                    (root / 'skills/onboarding/SKILL.md').write_text('owner custom skill', encoding='utf-8')
                     self.assertIn('Owner edited this persona.', build_prompt(root))
                     transcript = app.messages.copy()
                 finally:
@@ -38,14 +38,14 @@ class SeedTests(unittest.TestCase):
                 try:
                     self.assertEqual(app.messages, transcript)
                     self.assertEqual(app.get_settings()['persona'], 'Owner edited this persona.')
-                    self.assertEqual((root / 'skills/onboarding/SKILL.md').read_text(), 'owner custom skill')
+                    self.assertEqual((root / 'skills/onboarding/SKILL.md').read_text(encoding='utf-8'), 'owner custom skill')
                 finally:
                     app.close()
 
     def test_source_contract_for_shared_sprite_and_separate_roster_status(self):
         console = Path(__file__).resolve().parents[1] / 'lite/console'
-        source = (console / 'app.js').read_text()
+        source = (console / 'app.js').read_text(encoding='utf-8')
         self.assertIn('window.TitanCrew?.stillFor(0, mood)', source)
         self.assertIn('class="worker-name"', source)
         self.assertIn('class="worker-status"', source)
-        self.assertIn('Personality', (console / 'settings.js').read_text())
+        self.assertIn('Personality', (console / 'settings.js').read_text(encoding='utf-8'))
