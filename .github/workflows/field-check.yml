@@ -79,9 +79,24 @@ jobs:
           print("Titanium Tiiny Bot is serving on Windows at", url)
           PY
 
-      - name: The app's own log, whatever happened
+      - name: Everything the install folder knows, whatever happened
+        # The farm's log is the only account of why an app would not start, so print it
+        # and everything beside it rather than one guessed path. The 0.1.16 field failure
+        # was read out of this step; make the next one at least as easy.
         if: always()
-        run: cat "$HOME/tiinyapps/titanium-tiiny-bot/farm.log" || echo "no farm log to show"
+        run: |
+          folder="$HOME/tiinyapps/titanium-tiiny-bot"
+          echo "--- $folder ---"
+          ls -la "$folder" || echo "nothing installed there"
+          for name in farm.log process.json farm.pid; do
+            if [ -f "$folder/$name" ]; then
+              echo "--- $name ---"
+              cat "$folder/$name"
+            fi
+          done
+          # The app keeps its own data, and its own log, under the version it installed.
+          find "$folder" -maxdepth 3 -name "lite.log" -print -exec cat {} \; 2>/dev/null || true
+          find "$folder" -maxdepth 3 -name "config.json" -print -exec cat {} \; 2>/dev/null || true
 
       - name: Stop and remove it
         if: always()

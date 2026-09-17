@@ -151,6 +151,13 @@ def read_endpoints(value):
 # how this stops working next week. The old default was http://openai.api.tiiny/v1,
 # a name the TiinyOS desktop app puts in /etc/resolver, so it resolved on one Mac
 # and nowhere on Linux, which this bot also runs on.
+# An address that is a valid URL and certain to answer nothing: port 1 on loopback has
+# no listener. It stands in for "there is no Tiiny in the room", so the device layer
+# fails the way an unplugged Tiiny fails, which is a path this app already handles
+# well, instead of the app refusing to run. It is never shown to a person: Settings
+# and --show-config report an empty address, because that is what is true.
+NO_DEVICE_BASE = "http://127.0.0.1:1/v1"
+
 DEFAULTS = dict(base="", model="default", port=7788,
                 bind="0.0.0.0", name="Titan", endpoints=[], mcp=True)
 
@@ -184,15 +191,15 @@ def load_config(root, overrides=None):
     if isinstance(values.get("base"), str) and not values["base"].strip() and values.get("model") == "echo":
         # The echo model answers from memory and never calls anything, so a selfcheck or a
         # test with no Tiiny in the room needs no device search and no address at all.
-        values["base"] = "http://127.0.0.1:1/v1"
+        values["base"] = NO_DEVICE_BASE
     if isinstance(values.get("base"), str) and not values["base"].strip():
         from . import device as tiiny_device
-        values["base"] = tiiny_device.find_base()
-        if not values["base"]:
-            raise Refusal(
-                "No Tiiny found. Looked at TIINY_BASE, ~/.tiinyapps/device.json, "
-                "the USB links and this machine's own network. Set --base or "
-                "TIINY_BASE to the device's address.")
+        values["base"] = tiiny_device.find_base() or NO_DEVICE_BASE
+        # Finding nothing used to refuse the whole start. Settings > Model is where a
+        # person types an address, and they cannot reach Settings if the console never
+        # comes up, so the first run on a machine with no Tiiny on it was a dead end:
+        # the farm's Windows field check on 2026-09-16 failed exactly here. Come up, say
+        # there is no Tiiny, and let them fix it in the place that fixes it.
     # A saved other computer carries its own key and only its own. The device's
     # key is never handed to somebody else's machine, and it survives the trip
     # there and back, which is what makes one press to return to the device safe.
@@ -493,6 +500,10 @@ class Device:
         if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise Refusal("Use a plain HTTP or HTTPS model address without embedded credentials.")
         self.base, self.key, self.model = base.rstrip("/"), key, model
+        # No address was ever set, as against one that is set and not answering. The
+        # sentence a person needs is different for each, and only one of them is their
+        # device's fault.
+        self.no_device = self.base == NO_DEVICE_BASE.rstrip("/")
         self.resolved_model = None if model == "default" else model
         # Hand the lane the port the base already names. OneLane probes the
         # device for it when the port is left out, and it must not: we already
@@ -507,6 +518,18 @@ class Device:
         handler = logging.FileHandler(root / "lite.log", encoding="utf-8", delay=True)
         handler.setFormatter(LogFormatter(key))
         self.log.addHandler(handler)
+
+    def unreachable_words(self, checking):
+        """Why the device did not answer, in words that fit which case this is.
+
+        "Check its address" is useless advice to somebody who has never given one. They
+        need to be sent to the box where an address goes, not to inspect an address that
+        does not exist.
+        """
+        if self.no_device:
+            return ("No Tiiny is set up yet. Open Settings > Model and enter your device's"
+                    " address, or run farm device and start Titan again.")
+        return "Cannot reach the device. Check its address and that its %s." % checking
 
     def headers(self):
         """A bearer only when there is one. An empty one is worse than none:
@@ -559,7 +582,7 @@ class Device:
             return error.code, payload if isinstance(payload, dict) else {}
         except (urllib.error.URLError, OSError, TimeoutError, ValueError):
             self.log.exception("management request failed path=%s", path)
-            raise Refusal("Cannot reach the device. Check its address and that it is switched on.", 503) from None
+            raise Refusal(self.unreachable_words("switched on"), 503) from None
 
     def lifecycle(self, model, action):
         """Start or stop one model on the device, in the device's own words.
@@ -715,8 +738,7 @@ class Device:
                 attempt += 1
             except (urllib.error.URLError, TimeoutError, OSError):
                 self.log.exception("request transport exception path=%s", path)
-                raise self.true_refusal("Cannot reach the device. Check its address and that its"
-                                        " model is running.") from None
+                raise self.true_refusal(self.unreachable_words("model is running")) from None
             except Exception:
                 self.log.exception("request exception path=%s", path)
                 raise
@@ -891,6 +913,10 @@ class App:
         for handler in self.device.log.handlers:
             handler.close()
 
+    def shown_base(self):
+        """The address to show a person: the stand-in is ours, not theirs."""
+        return "" if self.device.no_device else self.device.base
+
     def endpoint_source(self):
         """Which of the three the turn will go to: the device, another computer
         on this network, or a cloud model. An address the owner never saved is
@@ -901,7 +927,7 @@ class App:
         return endpoint_kind(base)
 
     def live(self):
-        return dict(source=self.endpoint_source(), endpoint=self.device.base,
+        return dict(source=self.endpoint_source(), endpoint=self.shown_base(),
                     model=self.device.resolved_model or self.device.model,
                     resolvedModel=self.device.resolved_model, hasKey=bool(self.device.key))
 
@@ -1059,7 +1085,7 @@ class App:
                     coldStartMs=round(self.cold_start_ms, 2))
 
     def get_settings(self):
-        return dict(copy.deepcopy(self.settings), base=self.device.base, model=self.device.model, resolvedModel=self.device.resolved_model, persona=read_persona(self.root), version=__version__,
+        return dict(copy.deepcopy(self.settings), base=self.shown_base(), model=self.device.model, resolvedModel=self.device.resolved_model, persona=read_persona(self.root), version=__version__,
                     budget=self.budget(), usage=dict(tokens=self.tokens, minutes=round(self.seconds / 60, 3)))
 
     def patch_settings(self, body):
@@ -2061,11 +2087,27 @@ def main():
         return
     try:
         config = load_config(root, overrides)
-    except (Refusal, ValueError, OSError):
+    except Refusal as refusal:
+        # A Refusal is already a sentence written for a person, and it names the thing
+        # that is actually wrong. Burying it under one about config.json sent somebody to
+        # read a file that was fine: the farm's Windows field check on 2026-09-16 reported
+        # "Cannot read configuration" when the real answer was in the refusal it hid.
+        # Only a config that genuinely cannot be read gets the sentence about config.
+        print(str(refusal), file=sys.stderr)
+        raise SystemExit(1) from None
+    except (ValueError, OSError):
         print("Cannot read configuration; check config.json and your command-line settings.", file=sys.stderr)
         raise SystemExit(1)
+    if config["base"] == NO_DEVICE_BASE and config["model"] != "echo":
+        # Into the farm's log as well as the terminal, so the reason for a quiet console
+        # is written down somewhere a person or an agent will actually look.
+        print("No Tiiny found on this machine, its USB links or its network. Titan is starting"
+              " anyway. Open Settings > Model to enter the address, or run farm device and"
+              " start it again.", file=sys.stderr, flush=True)
     if args.show_config:
-        print(json.dumps(config | {"key": "********" if config["key"] else ""}, indent=2))
+        print(json.dumps(config | {"key": "********" if config["key"] else "",
+                                   "base": "" if config["base"] == NO_DEVICE_BASE else config["base"]},
+                         indent=2))
         return
     # Shell background jobs can inherit SIG_IGN; --stop must still work.
     previous_sigint = signal.signal(signal.SIGINT, signal.default_int_handler)

@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from lite import __version__
-from lite.server import App, DEFAULTS, Device, Refusal, load_config, main
+from lite.server import App, DEFAULTS, Device, NO_DEVICE_BASE, Refusal, load_config, main
 from tests.test_server import wire
 
 
@@ -166,14 +166,43 @@ class ConfigTests(unittest.TestCase):
 
     def test_malformed_configuration_exits_without_traceback(self):
         load_config(self.root)
-        for filename, contents in (("keys.json", "[]"), ("config.json", "not json")):
-            (self.root / filename).write_text(contents, encoding='utf-8')
-            code, out, err = self.cli("--show-config")
-            self.assertEqual(code, 1)
-            self.assertEqual(out, "")
-            self.assertNotIn("Traceback", err)
-            self.assertIn("configuration", err)
+        # A refusal already names the file that is wrong, so it is the sentence to print.
+        # A file that is not JSON at all has no refusal to give, and gets the general one.
+        for filename, contents, expected in (("keys.json", "[]", "keys.json"),
+                                             ("config.json", "not json", "configuration")):
+            with self.subTest(file=filename):
+                (self.root / filename).write_text(contents, encoding='utf-8')
+                code, out, err = self.cli("--show-config")
+                self.assertEqual(code, 1)
+                self.assertEqual(out, "")
+                self.assertNotIn("Traceback", err)
+                self.assertIn(expected, err)
             (self.root / filename).write_text("{}", encoding='utf-8')
+
+    def test_no_tiiny_anywhere_starts_anyway_and_says_so(self):
+        """The farm's Windows field check died here on 2026-09-16.
+
+        A person types their device's address into Settings > Model, and cannot reach
+        Settings if the console never comes up, so refusing to start on a machine where
+        the search finds nothing was a dead end with no way out of it. The message it
+        exited with named config.json, which was not the problem.
+        """
+        with patch('lite.device.find_base', return_value=''):
+            code, out, err = self.cli('--show-config')
+        self.assertEqual(code, 0, err)
+        self.assertIn('No Tiiny found', err)
+        self.assertIn('Settings > Model', err)
+        # The stand-in address is ours and is never shown as if the owner had chosen it.
+        self.assertEqual(json.loads(out)['base'], '')
+
+    def test_a_device_that_was_never_set_up_is_not_told_to_check_its_address(self):
+        with patch('lite.device.find_base', return_value=''):
+            never = Device(self.root, load_config(self.root)['base'], '', 'default')
+        self.assertTrue(never.no_device)
+        self.assertIn('Settings > Model', never.unreachable_words('model is running'))
+        set_up = Device(self.root, 'http://192.0.2.10/v1', '', 'default')
+        self.assertFalse(set_up.no_device)
+        self.assertIn('Check its address', set_up.unreachable_words('model is running'))
 
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
