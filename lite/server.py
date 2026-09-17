@@ -554,6 +554,9 @@ class Device:
         explain, so its body comes back rather than an exception; only an
         unreachable box raises.
         """
+        if self.no_device:
+            # Same reason as in request(): no address was given, so nothing is called.
+            raise Refusal(self.unreachable_words("switched on"), 503)
         parsed = urllib.parse.urlsplit(self.base)
         url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
         headers = self.headers()
@@ -639,6 +642,13 @@ class Device:
     def request(self, path, body=None, on_token=None):
         if self.model == "echo" and path == "/models":
             return {"data": [{"id": "echo", "name": "Echo (development)"}]}
+        if self.no_device:
+            # There is no address to call, so refuse before a socket is opened rather than
+            # let the connection fail. The stand-in is a real loopback URL and on some
+            # systems an ordinary process may listen on it; anything answering there would
+            # be handed the saved key and have its replies taken for a model's, tool calls
+            # and all. A device nobody configured is not reachable by accident.
+            raise Refusal(self.unreachable_words("model is running"), 503)
         started = time.monotonic()
         attempt = 0
         emitted = False
@@ -782,7 +792,7 @@ class Device:
         sentence is true, and it must not become a second way to fail. None means the device did
         not answer at all, which is the one case where "cannot reach it" is the honest thing.
         """
-        if self.model == "echo":
+        if self.model == "echo" or self.no_device:
             return None
         try:
             request = urllib.request.Request(self.base + "/models", headers=self.headers())

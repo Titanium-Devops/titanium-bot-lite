@@ -204,6 +204,25 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(set_up.no_device)
         self.assertIn('Check its address', set_up.unreachable_words('model is running'))
 
+    def test_a_device_that_was_never_set_up_opens_no_socket(self):
+        """The stand-in address is a real loopback URL, so nothing may actually call it.
+
+        On some systems an ordinary process can listen on port 1. Anything answering
+        there would be handed whatever key is saved and have its replies taken for a
+        model's, tool calls included, so the refusal has to come before the socket and
+        not from the connection failing.
+        """
+        with patch('lite.device.find_base', return_value=''):
+            device = Device(self.root, load_config(self.root)['base'], 'a-saved-key', 'default')
+        with patch('lite.server.urllib.request.urlopen') as opened:
+            for name, call in (('request', lambda: device.request('/chat/completions', {}, None)),
+                               ('management', lambda: device.management('/api/v1/models/npu/status'))):
+                with self.subTest(route=name):
+                    with self.assertRaises(Refusal) as refused:
+                        call()
+                    self.assertIn('Settings > Model', str(refused.exception))
+            opened.assert_not_called()
+
     def test_version_needs_no_data_or_server(self):
         code, out, err = self.cli('--version')
         self.assertEqual((code, out, err), (0, __version__ + '\n', ''))
