@@ -34,6 +34,14 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover -s tests
 
+      - name: Start it the way the farm does
+        # Named on its own because this is the check 0.1.17 did not have. The selfcheck
+        # below forces the echo model and never looks for a device; farm start does
+        # neither, and that is the path that failed on a tester's Windows machine while
+        # every job here was green. It also runs inside the suite above; it is repeated
+        # here so a red Windows job says which thing broke without reading the log.
+        run: python -m unittest discover -s tests -p "test_farm_start.py" -v
+
       - name: Offline selfcheck
         # A bare --selfcheck answers on the echo model, so this needs no Tiiny and no
         # network: it measures that the app imports, binds, serves and replies.
