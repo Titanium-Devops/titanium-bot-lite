@@ -86,17 +86,22 @@ jobs:
         if: always()
         run: |
           folder="$HOME/tiinyapps/titanium-tiiny-bot"
-          echo "--- $folder ---"
-          ls -la "$folder" || echo "nothing installed there"
+          echo "--- everything under $folder ---"
+          # The whole tree, not one level: the farm keeps each release under its own
+          # version folder and the app's data under that, so a file in the wrong place
+          # is exactly the kind of thing worth seeing.
+          find "$folder" -print || echo "nothing installed there"
           for name in farm.log process.json farm.pid; do
             if [ -f "$folder/$name" ]; then
               echo "--- $name ---"
               cat "$folder/$name"
             fi
           done
-          # The app keeps its own data, and its own log, under the version it installed.
-          find "$folder" -maxdepth 3 -name "lite.log" -print -exec cat {} \; 2>/dev/null || true
-          find "$folder" -maxdepth 3 -name "config.json" -print -exec cat {} \; 2>/dev/null || true
+          # The app's own log, which carries what it could not do and why.
+          find "$folder" -name "lite.log" -print -exec cat {} \; 2>/dev/null || true
+          # Deliberately not config.json. It holds the addresses of somebody's device and
+          # of any other computer they saved, and this log is readable by anyone who can
+          # see the run. The listing above already says whether the file is there.
 
       - name: Stop and remove it
         if: always()
