@@ -18,7 +18,7 @@ permissions:
 jobs:
   stranger:
     name: install from the farm and serve
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     # No checkout, deliberately. Nothing in this job may come from the repository, or it
     # stops being the stranger's path and starts being our own tree again.
     defaults:
