@@ -233,6 +233,38 @@ def base_for(host: str, port=None) -> str:
     return ("http://%s/v1" % host) if port == 80 else ("http://%s:%d/v1" % (host, port))
 
 
+def account_auth_key(addr: str, serial: str, password: str) -> str:
+    """The device's own static API key, straight from the box, no TiinyOS.
+
+    POST /api/v1/account/auth (password + serial), Host: auth.api.tiiny,
+    unlocks /data and hands back `auth_key` -- the same 36-char UUID
+    find() looks for. Confirmed 2026-09-24 against a live device. Full
+    writeup: ~/code/tiiny/tools/README-unlock.md.
+
+    Deliberately NOT wired into find(): find() runs during server startup
+    and settings reload, is documented to never raise, and has no terminal
+    to prompt on even when one exists somewhere (this is a web server, not
+    a CLI). The settings page (vendor/machine-room, not this repo's own
+    code) is where a "fetch it for me" button would belong, not here. This
+    is a plain capability for an operator's own one-off use in the
+    meantime -- get a key once, same way tiiny-unlock.py does, and paste
+    it into TIINY_KEY or the settings page's own key field. Returns "" on
+    any failure.
+    """
+    body = json.dumps({"password": password, "device_id": serial}).encode()
+    req = urllib.request.Request(
+        "http://%s/api/v1/account/auth" % addr, data=body, method="POST",
+        headers={"Content-Type": "application/json", "Host": "auth.api.tiiny",
+                 "x-device-id": serial, "accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            out = json.loads(resp.read().decode())
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            ValueError, OSError):
+        return ""
+    return (out.get("auth_key") or "").strip()
+
+
 def find() -> dict:
     """{"base", "key", "source", "plane", "serial"} for the box we should use.
 
