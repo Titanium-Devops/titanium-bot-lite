@@ -8,3 +8,6 @@ build/
 
 # graft's local graph cache: regenerable, not committed (run `graft build`).
 /graft/
+
+# Graft local cache (directory or symlink)
+/graft
